@@ -3759,6 +3759,70 @@ dnl Set up the configuration based on the host platform!
 case "$host" in
     *-*-linux*|*-*-uclinux*|*-*-gnu*|*-*-k*bsd*-gnu|*-*-bsdi*|*-*-freebsd*|*-*-dragonfly*|*-*-netbsd*|*-*-openbsd*|*-*-sysv5*|*-*-solaris*|*-*-hpux*|*-*-aix*|*-*-minix*|*-*-nto*)
         case "$host" in
+            m68k-atari-mint*)
+                ARCH=atari
+                # Check for GEM library
+                save_LIBS="$LIBS"
+                LIBS="-lgem $LIBS"
+                AC_LINK_IFELSE(
+                    [AC_LANG_PROGRAM([[#include <gem.h>]], [[appl_init();]])],
+                    [have_gemlib=yes],
+                    [have_gemlib=no]
+                )
+                LIBS="$save_LIBS"
+                
+                if test "x$have_gemlib" = "xyes"; then
+                    EXTRA_LDFLAGS="$EXTRA_LDFLAGS -lgem"
+                else
+                    AC_MSG_ERROR([GEM library not found])
+                fi
+                
+                # Set up compiler flags
+                CFLAGS="$CFLAGS -fomit-frame-pointer -fno-strict-aliasing -O2"
+                CXXFLAGS="$CXXFLAGS -fomit-frame-pointer -fno-strict-aliasing -O2"
+                
+                have_loadso=no
+
+                dnl Setup audio drivers
+                if test x$enable_audio = xyes; then
+                    AC_DEFINE(SDL_AUDIO_DRIVER_ATARI, 1, [ ])
+                    SOURCES="$SOURCES $srcdir/src/audio/atari/*.c"
+                    have_audio=yes
+                    SUMMARY_audio="${SUMMARY_audio} atari"
+                fi
+                dnl Setup input drivers
+                if test x$enable_input = xyes; then
+                    AC_DEFINE(SDL_INPUT_ATARI, 1, [ ])
+                    SOURCES="$SOURCES $srcdir/src/joystick/atari/*.c"
+                    have_input=yes
+                    SUMMARY_input="${SUMMARY_input} atari"   
+                fi    
+                dnl Setup video drivers
+                if test x$enable_video = xyes; then
+                    AC_DEFINE(SDL_VIDEO_DRIVER_ATARI, 1, [ ])
+                    AC_DEFINE(SDL_VIDEO_DRIVER_GEM, 1, [ ])
+                    SOURCES="$SOURCES $srcdir/src/video/atari/*.c"
+                    SOURCES="$SOURCES $srcdir/src/video/gem/*.c"
+                    SOURCES="$SOURCES $srcdir/src/video/ataricommon/*.c"
+                    have_video=yes
+                    SUMMARY_video="${SUMMARY_video} atari gem"
+                fi
+                # Disable incompatible features
+                enable_libudev=no
+                enable_dbus=no
+                enable_ibus=no
+                enable_fcitx=no
+                enable_ime=no
+                enable_hidapi=no
+                enable_opengl_es2=no
+                enable_offscreen=no
+                enable_loadso=no        # Add this - Mint doesn't support dynamic loading
+                enable_shared=no        # Force static library build
+                # Enable Atari-specific features
+                enable_assembly=no
+                enable_power=no
+                enable_atari_assembly=no               
+                ;;
             *-*-android*)
                 # Android
                 ARCH=android
