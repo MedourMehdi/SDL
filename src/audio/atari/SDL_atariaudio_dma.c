@@ -2,10 +2,19 @@
 #include "../../SDL_internal.h"
 #include "../SDL_audio_c.h"
 
+/* Add a static pointer to keep track of the current audio device */
+static SDL_AudioDevice *current_audio = NULL;
+
+/* Function to set the current audio device */
+void SDL_SetCurrentAudioDevice(SDL_AudioDevice *device)
+{
+    current_audio = device;
+}
+
 /* The DMA interrupt handler */
 void __attribute__((interrupt)) mint_audio_callback(void)
 {
-    SDL_AudioDevice *audio = SDL_GetCurrentAudioDevice();
+    SDL_AudioDevice *audio = current_audio;
     struct SDL_PrivateAudioData *hidden;
     
     if (!audio || !audio->hidden) {
@@ -34,9 +43,14 @@ void __attribute__((interrupt)) mint_audio_callback(void)
 
 int mint_audio_open(_THIS, SDL_AudioSpec *spec)
 {
-    struct SDL_PrivateAudioData *hidden = _this->hidden;
-    Uint32 freq = spec->freq;
+    struct SDL_PrivateAudioData *hidden;
+    Uint32 freq;
     Uint8 format;
+
+    /* Set the current audio device */
+    SDL_SetCurrentAudioDevice(_this);
+    hidden = _this->hidden;
+    freq = spec->freq;
     
     /* Set audio format */
     switch (spec->format & ~SDL_AUDIO_MASK_ENDIAN) {

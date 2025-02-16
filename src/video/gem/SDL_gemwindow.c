@@ -93,7 +93,6 @@ int GEM_CreateWindow(_THIS, SDL_Window *window)
 
 int GEM_CreateWindowFramebuffer(_THIS, SDL_Window *window, Uint32 *format, void **pixels, int *pitch)
 {
-    SDL_WindowData *data = (SDL_WindowData *)window->driverdata;
     int bpp;
     Uint32 Rmask, Gmask, Bmask, Amask;
 
@@ -122,7 +121,6 @@ int GEM_UpdateWindowFramebuffer(_THIS, SDL_Window *window, const SDL_Rect *rects
     short pxy[8];
     SDL_WindowData *data = (SDL_WindowData *)window->driverdata;
     void *pixels;
-    int pitch;
 
     pixels = SDL_GetWindowData(window, "SDL_WindowFramebuffer");
     if (!pixels) {

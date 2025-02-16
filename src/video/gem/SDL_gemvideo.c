@@ -6,12 +6,6 @@
 #include <mint/osbind.h>
 #include <mint/cookie.h>
 
-/* Defines from old GEM/GEMX headers */
-#ifndef APP_FIRST
-#define APP_FIRST 0x0001
-#endif
-
-static SDL_VideoDevice *GEM_Create(void);
 static int GEM_ShowMessageBox(const SDL_MessageBoxData *messageboxdata, int *buttonid);
 
 /* Global variables for AES */
@@ -210,12 +204,6 @@ void GEM_VideoQuit(_THIS)
 
     /* Close AES */
     appl_exit();
-}
-
-/* Implementation of the create function that matches the signature */
-static SDL_VideoDevice *GEM_Create(void)
-{
-    return GEM_CreateDevice(0);  /* We always use device index 0 */
 }
 
 /* Basic message box implementation */

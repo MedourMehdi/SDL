@@ -3757,7 +3757,7 @@ have_locale=no
 
 dnl Set up the configuration based on the host platform!
 case "$host" in
-    *-*-linux*|*-*-uclinux*|*-*-gnu*|*-*-k*bsd*-gnu|*-*-bsdi*|*-*-freebsd*|*-*-dragonfly*|*-*-netbsd*|*-*-openbsd*|*-*-sysv5*|*-*-solaris*|*-*-hpux*|*-*-aix*|*-*-minix*|*-*-nto*)
+    m68k-atari-mint*|*-*-linux*|*-*-uclinux*|*-*-gnu*|*-*-k*bsd*-gnu|*-*-bsdi*|*-*-freebsd*|*-*-dragonfly*|*-*-netbsd*|*-*-openbsd*|*-*-sysv5*|*-*-solaris*|*-*-hpux*|*-*-aix*|*-*-minix*|*-*-nto*)
         case "$host" in
             m68k-atari-mint*)
                 ARCH=atari
@@ -3791,12 +3791,10 @@ case "$host" in
                     SUMMARY_audio="${SUMMARY_audio} atari"
                 fi
                 dnl Setup input drivers
-                if test x$enable_input = xyes; then
-                    AC_DEFINE(SDL_INPUT_ATARI, 1, [ ])
-                    SOURCES="$SOURCES $srcdir/src/joystick/atari/*.c"
-                    have_input=yes
-                    SUMMARY_input="${SUMMARY_input} atari"   
-                fi    
+                AC_DEFINE(SDL_INPUT_ATARI, 1, [ ])
+                SOURCES="$SOURCES $srcdir/src/joystick/atari/*.c"
+                have_input=yes
+                SUMMARY_input="${SUMMARY_input} atari"   
                 dnl Setup video drivers
                 if test x$enable_video = xyes; then
                     AC_DEFINE(SDL_VIDEO_DRIVER_ATARI, 1, [ ])
@@ -3808,12 +3806,17 @@ case "$host" in
                     SUMMARY_video="${SUMMARY_video} atari gem"
                 fi
                 # Disable incompatible features
+                enable_haptic=no
+                AC_DEFINE(SDL_HAPTIC_DISABLED, 1, [ ])
+                enable_sensor=no
+                AC_DEFINE(SDL_SENSOR_DISABLED, 1, [ ])
                 enable_libudev=no
                 enable_dbus=no
                 enable_ibus=no
                 enable_fcitx=no
                 enable_ime=no
                 enable_hidapi=no
+                AC_DEFINE(SDL_HIDAPI_DISABLED, 1, [ ])
                 enable_opengl_es2=no
                 enable_offscreen=no
                 enable_loadso=no        # Add this - Mint doesn't support dynamic loading

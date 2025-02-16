@@ -1,3 +1,4 @@
+#include "SDL_keyboard.h"
 #include "SDL_atarikeys.h"
 #include <mint/sysbind.h>
 

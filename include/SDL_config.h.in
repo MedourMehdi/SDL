@@ -442,6 +442,11 @@
 /* Enable Metal support */
 #undef SDL_VIDEO_METAL
 
+#undef SDL_VIDEO_DRIVER_ATARI
+#undef SDL_VIDEO_DRIVER_GEM
+#undef SDL_AUDIO_DRIVER_ATARI
+#undef SDL_INPUT_ATARI
+
 /* Enable system power support */
 #undef SDL_POWER_LINUX
 #undef SDL_POWER_WINDOWS

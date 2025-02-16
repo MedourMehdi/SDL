@@ -32,6 +32,10 @@
 #undef __AIX__
 #define __AIX__     1
 #endif
+#if defined(__MINT__)
+#undef __MINT__
+#define __MINT__     1
+#endif
 #if defined(__HAIKU__)
 #undef __HAIKU__
 #define __HAIKU__   1

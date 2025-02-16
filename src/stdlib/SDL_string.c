@@ -33,6 +33,10 @@
 #include <psp2/kernel/clib.h>
 #endif
 
+#ifdef __MINT__
+#include <support.h>
+#endif
+
 #if !defined(HAVE_VSSCANF) || !defined(HAVE_STRTOL) || !defined(HAVE_STRTOUL) || !defined(HAVE_STRTOD) || !defined(HAVE_STRTOLL) || !defined(HAVE_STRTOULL)
 #define SDL_isupperhex(X) (((X) >= 'A') && ((X) <= 'F'))
 #define SDL_islowerhex(X) (((X) >= 'a') && ((X) <= 'f'))

@@ -41,6 +41,10 @@
 #include "../../core/linux/SDL_dbus.h"
 #endif /* __LINUX__ */
 
+#ifdef __MINT__
+#include <sched.h>
+#endif
+
 #if (defined(__LINUX__) || defined(__MACOSX__) || defined(__IPHONEOS__) || defined(__ANDROID__)) && defined(HAVE_DLOPEN)
 #include <dlfcn.h>
 #ifndef RTLD_DEFAULT
@@ -188,6 +192,15 @@ SDL_threadID SDL_ThreadID(void)
 
 int SDL_SYS_SetThreadPriority(SDL_ThreadPriority priority)
 {
+#ifdef __MINT__
+/* MiNT priorities range from 0 (lowest) to 32 (highest) */
+#define MINT_PRIORITY_MIN 0
+#define MINT_PRIORITY_MAX 32
+#define MINT_PRIORITY_NORMAL 16
+
+int min_priority = MINT_PRIORITY_MIN;
+int max_priority = MINT_PRIORITY_MAX;
+#endif
 #if defined(__NACL__) || defined(__RISCOS__) || defined(__OS2__)
     /* FIXME: Setting thread priority does not seem to be supported in NACL */
     return 0;
@@ -252,6 +265,18 @@ int SDL_SYS_SetThreadPriority(SDL_ThreadPriority priority)
         return SDL_LinuxSetThreadPriorityAndPolicy(linuxTid, priority, policy);
     }
 #else
+#ifdef __MINT__
+    if (priority == SDL_THREAD_PRIORITY_LOW) {
+        sched.sched_priority = MINT_PRIORITY_MIN;
+    } else if (priority == SDL_THREAD_PRIORITY_TIME_CRITICAL) {
+        sched.sched_priority = MINT_PRIORITY_MAX;
+    } else {
+        if (priority == SDL_THREAD_PRIORITY_HIGH) {
+            sched.sched_priority = (MINT_PRIORITY_NORMAL + MINT_PRIORITY_MAX) / 2;
+        } else {
+            sched.sched_priority = MINT_PRIORITY_NORMAL;
+        }
+#else
     if (priority == SDL_THREAD_PRIORITY_LOW) {
         sched.sched_priority = sched_get_priority_min(policy);
     } else if (priority == SDL_THREAD_PRIORITY_TIME_CRITICAL) {
@@ -259,7 +284,7 @@ int SDL_SYS_SetThreadPriority(SDL_ThreadPriority priority)
     } else {
         int min_priority = sched_get_priority_min(policy);
         int max_priority = sched_get_priority_max(policy);
-
+#endif
 #if defined(__MACOSX__) || defined(__IPHONEOS__) || defined(__TVOS__)
         if (min_priority == 15 && max_priority == 47) {
             /* Apple has a specific set of thread priorities */

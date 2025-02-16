@@ -536,6 +536,14 @@ extern int SDL_GL_SwapWindowWithResult(SDL_Window *window);
 const char *SDL_GetCSSCursorName(SDL_SystemCursor id, const char **fallback_name);
 #endif
 
+#if SDL_VIDEO_DRIVER_ATARI
+extern VideoBootStrap ATARI_bootstrap;
+#endif
+
+#if SDL_VIDEO_DRIVER_GEM
+extern VideoBootStrap GEM_bootstrap;
+#endif
+
 #endif /* SDL_sysvideo_h_ */
 
 /* vi: set ts=4 sw=4 expandtab: */

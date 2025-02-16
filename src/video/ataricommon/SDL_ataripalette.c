@@ -7,7 +7,7 @@ void ATARI_SetPalette(_THIS, SDL_Color *colors, int firstcolor, int ncolors)
 {
     int i;
     volatile Uint16 *palette_regs;
-    SDL_VideoData *data = (SDL_VideoData *)_this->driverdata;
+    // SDL_VideoData *data = (SDL_VideoData *)_this->driverdata;
 
     /* Get palette registers based on hardware */
     switch(hw_info.video) {
