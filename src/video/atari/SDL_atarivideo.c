@@ -11,7 +11,7 @@ static void ATARI_VideoQuit(_THIS);
 static void ATARI_DeleteDevice(SDL_VideoDevice * device);
 
 static int ATARI_CreateWindowFramebuffer(_THIS, SDL_Window * window, Uint32 * format, void ** pixels, int *pitch);
-static void ATARI_UpdateWindowFramebuffer(_THIS, SDL_Window * window, const SDL_Rect * rects, int numrects);
+static int ATARI_UpdateWindowFramebuffer(_THIS, SDL_Window * window, const SDL_Rect * rects, int numrects);
 static void ATARI_DestroyWindowFramebuffer(_THIS, SDL_Window * window);
 
 /* ATARI video driver bootstrap functions */
@@ -89,9 +89,10 @@ static int ATARI_CreateWindowFramebuffer(_THIS, SDL_Window * window, Uint32 * fo
     return 0;
 }
 
-static void ATARI_UpdateWindowFramebuffer(_THIS, SDL_Window * window, const SDL_Rect * rects, int numrects)
+static int ATARI_UpdateWindowFramebuffer(_THIS, SDL_Window * window, const SDL_Rect * rects, int numrects)
 {
     /* Hardware framebuffer - no update needed */
+    return 1;
 }
 
 static void ATARI_DestroyWindowFramebuffer(_THIS, SDL_Window * window)

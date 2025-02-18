@@ -46,7 +46,6 @@ int ATARI_InitModes(_THIS)
     return 0;
 }
 
-
 int GEM_Available(void)
 {
     short work_in[11], work_out[57];
@@ -102,6 +101,8 @@ static SDL_VideoDevice *GEM_CreateDevice(int devindex)
     SDL_VideoDevice *device;
     struct SDL_VideoData *data;
 
+    printf("DEBUG: Creating GEM video device\n");
+
     /* Initialize device structure */
     device = (SDL_VideoDevice *)SDL_calloc(1, sizeof(SDL_VideoDevice));
     if (!device) {
@@ -117,7 +118,12 @@ static SDL_VideoDevice *GEM_CreateDevice(int devindex)
         return NULL;
     }
 
+    /* Setup amount of available displays */
+    device->num_displays = 0;
+
     device->driverdata = data;
+
+    printf("DEBUG: Setting up function pointers\n");
 
     /* Set function pointers */
     device->VideoInit = GEM_VideoInit;
@@ -130,9 +136,29 @@ static SDL_VideoDevice *GEM_CreateDevice(int devindex)
     device->DestroyWindow = GEM_DestroyWindow;
     device->free = GEM_DeleteDevice;
 
+    /* Set window management function pointers */
+    device->SetWindowPosition = GEM_SetWindowPosition;
+    printf("DEBUG: SetWindowPosition set to %p\n", device->SetWindowPosition);
+
+    /* Window operations */
+
+    device->ShowWindow = GEM_ShowWindow;
+    device->HideWindow = GEM_HideWindow;
+    device->RaiseWindow = GEM_RaiseWindow;
+    device->MaximizeWindow = GEM_MaximizeWindow;
+    device->MinimizeWindow = GEM_MinimizeWindow;
+    device->RestoreWindow = GEM_RestoreWindow;
+    device->SetWindowBordered = GEM_SetWindowBordered;
+    device->SetWindowResizable = GEM_SetWindowResizable;
+    device->SetWindowSize = GEM_SetWindowSize;
+    device->SetWindowMinimumSize = GEM_SetWindowMinimumSize;
+    device->SetWindowMaximumSize = GEM_SetWindowMaximumSize;
+
     /* Event handling */
     device->PumpEvents = GEM_PumpEvents;
 
+    printf("DEBUG: GEM device created successfully\n");
+    
     return device;
 }
 
@@ -157,7 +183,9 @@ int GEM_VideoInit(_THIS)
     /* Initialize VDI */
     data->vdi_handle = graf_handle(&work_out[0], &work_out[1], 
                                   &work_out[2], &work_out[3]);
-    
+
+    /* Hardcoded 16bpp for now */
+    data->planes = 16;
     for (i = 0; i < 10; i++) {
         work_in[i] = 1;
     }
@@ -167,6 +195,8 @@ int GEM_VideoInit(_THIS)
     if (data->vdi_handle == 0) {
         appl_exit();
         return SDL_SetError("Can't initialize VDI");
+    }else{
+        printf("GEM: VDI handle = %d\n", data->vdi_handle);
     }
 
     /* Add display mode */
@@ -228,6 +258,9 @@ VideoBootStrap GEM_bootstrap = {
     GEM_CreateDriver,    /* Now using the correct function type */
     GEM_ShowMessageBox
 };
+
+/* Thinking to implement custom renderer ?*/
+
 
 /* Implement the renderer functions */
 // static SDL_Renderer *GEM_CreateRenderer(SDL_Window *window, Uint32 flags)
