@@ -584,6 +584,13 @@ if test x$enable_threads != xyes; then
 else
     SUMMARY_modules="${SUMMARY_modules} threads"
 fi
+AC_ARG_ENABLE(threads,
+[AS_HELP_STRING([--enable-atari-threads], [Enable experimental atari threads subsystem [default=yes]])],
+              , enable_atari_threads=no)
+
+AC_ARG_ENABLE(timers,
+[AS_HELP_STRING([--enable-atari-timers], [Enable eperimental atari timer subsystem [default=yes]])],
+              , enable_atari_timers=no)           
 AC_ARG_ENABLE(timers,
 [AS_HELP_STRING([--enable-timers], [Enable the timer subsystem [default=yes]])],
               , enable_timers=yes)
@@ -3776,7 +3783,12 @@ case "$host" in
                 else
                     AC_MSG_ERROR([GEM library not found])
                 fi
-                
+                # Set up files for the thread library
+                if test x$enable_atari_threads = xyes; then
+                    AC_DEFINE(SDL_THREAD_ATARI, 1, [ ])
+                    SOURCES="$SOURCES $srcdir/src/thread/atari/*.c"
+                    have_threads=yes
+                fi
                 # Set up compiler flags
                 CFLAGS="$CFLAGS -fomit-frame-pointer -fno-strict-aliasing -O2"
                 CXXFLAGS="$CXXFLAGS -fomit-frame-pointer -fno-strict-aliasing -O2"
@@ -4059,9 +4071,25 @@ case "$host" in
         fi
         # Set up files for the timer library
         if test x$enable_timers = xyes; then
-            AC_DEFINE(SDL_TIMER_UNIX, 1, [ ])
-            SOURCES="$SOURCES $srcdir/src/timer/unix/*.c"
-            have_timers=yes
+        case $ARCH in
+            atari)
+                # Set up files for the timer library
+                if test x$enable_atari_timers = xyes; then
+                    AC_DEFINE(SDL_TIMER_ATARI, 1, [ ])
+                    SOURCES="$SOURCES $srcdir/src/timer/atari/*.c"
+                    have_timers=yes
+                else
+                    AC_DEFINE(SDL_TIMER_UNIX, 1, [ ])
+                    SOURCES="$SOURCES $srcdir/src/timer/unix/*.c"
+                    have_timers=yes                
+                fi            
+            ;;
+            *)
+                AC_DEFINE(SDL_TIMER_UNIX, 1, [ ])
+                SOURCES="$SOURCES $srcdir/src/timer/unix/*.c"
+                have_timers=yes
+            ;;
+            esac
         fi
         # Set up files for udev hotplugging support
         if test x$enable_libudev = xyes && test x$have_libudev_h_hdr = xyes; then

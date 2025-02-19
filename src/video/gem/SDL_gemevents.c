@@ -34,8 +34,11 @@ void GEM_PumpEvents(_THIS)
     short msg[8];
     SDL_Event event;
     unsigned long interval = 0;  /* No timer delay */
+    int windowEventsEnabled = SDL_EventState(SDL_WINDOWEVENT, SDL_QUERY);
 
     printf("GEM_PumpEvents called (%d)\n", ++call_count);
+    printf("Window events enabled: %d\n", windowEventsEnabled);
+    printf("DEBUG: Thread ID for event pump: %ld\n", SDL_ThreadID());
 
     /* Handle events */
     event_mask = MU_MESAG | MU_KEYBD | MU_BUTTON | MU_M1;
@@ -80,12 +83,23 @@ void GEM_PumpEvents(_THIS)
                     case WM_MOVED:
                     {
                         if (win_data && msg[3] == win_data->handle) {
+                            // int oldx = window->x;
+                            // int oldy = window->y;                            
                             printf("DEBUG: WM_MOVED received: x=%d, y=%d\n", msg[4], msg[5]);
+                            printf("Window position before move: x=%d, y=%d\n", window->x, window->y);
                             /* Update internal position */
                             // window->x = msg[4];
                             // window->y = msg[5];
+                            // printf("Window position after move: x=%d, y=%d\n", window->x, window->y);
                             // SDL_SetWindowPosition(window, msg[4], msg[5]);
                             SDL_SendWindowEvent(window, SDL_WINDOWEVENT_MOVED, msg[4], msg[5]);
+                            // SDL_SendWindowEvent(window, SDL_WINDOWEVENT_MOVED, oldx, oldy);
+                            if (window) {
+                                printf("Window event queuing status:\n");
+                                printf("- Window ID: %d\n", window->id);
+                                printf("- Event type: %d\n", SDL_WINDOWEVENT_MOVED);
+                                printf("- Coordinates: %d,%d\n", msg[4], msg[5]);
+                            }                            
                         }
                     }
                     break;

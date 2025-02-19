@@ -2214,7 +2214,7 @@ void *SDL_GetWindowData(SDL_Window *window, const char *name)
 void SDL_SetWindowPosition(SDL_Window *window, int x, int y)
 {
     CHECK_WINDOW_MAGIC(window, );
-
+    printf("ATARI DEBUG: In SDL_SetWindowPosition\n");
     if (SDL_WINDOWPOS_ISCENTERED(x) || SDL_WINDOWPOS_ISCENTERED(y)) {
         int displayIndex = (x & 0xFFFF);
         SDL_Rect bounds;
@@ -3180,7 +3180,9 @@ void SDL_OnWindowResized(SDL_Window *window)
 void SDL_OnWindowMoved(SDL_Window *window)
 {
     int display_index = SDL_GetWindowDisplayIndex(window);
-
+    printf("ATARI DEBUG: Thread ID in SDL_OnWindowMoved: %ld\n", SDL_ThreadID());
+    printf("ATARI DEBUG: SDL_OnWindowMoved: window pos x=%d, y=%d\n", window->x, window->y);
+    printf("ATARI DEBUG: SDL_OnWindowMoved: display_index=%d\n", display_index);
     if (!window->is_destroying && display_index != window->display_index && display_index != -1) {
         window->display_index = display_index;
         SDL_SendWindowEvent(window, SDL_WINDOWEVENT_DISPLAY_CHANGED, window->display_index, 0);
