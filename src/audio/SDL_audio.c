@@ -45,8 +45,8 @@ static const AudioBootStrap *const bootstrap[] = {
 #ifdef SDL_AUDIO_DRIVER_PULSEAUDIO
     &PULSEAUDIO_bootstrap,
 #endif
-#if SDL_AUDIO_DRIVER_MINT
-    &MINTAUDIO_bootstrap,
+#if SDL_AUDIO_DRIVER_ATARI
+    &ATARIAUDIO_bootstrap,
 #endif
 #ifdef SDL_AUDIO_DRIVER_ALSA
     &ALSA_bootstrap,

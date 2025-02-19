@@ -2,115 +2,80 @@
 #include "../../SDL_internal.h"
 #include "../SDL_audio_c.h"
 
-/* Add a static pointer to keep track of the current audio device */
-static SDL_AudioDevice *current_audio = NULL;
+static SDL_AudioDevice *volatile current_audio = NULL;
+static volatile int loadNewSample = 0;
 
-/* Function to set the current audio device */
-void SDL_SetCurrentAudioDevice(SDL_AudioDevice *device)
-{
-    current_audio = device;
-}
-
-/* The DMA interrupt handler */
 void __attribute__((interrupt)) mint_audio_callback(void)
 {
-    SDL_AudioDevice *audio = current_audio;
-    struct SDL_PrivateAudioData *hidden;
+    register SDL_AudioDevice *audio = current_audio;
+    register struct SDL_PrivateAudioData *hidden;
+    
+    *((volatile unsigned char*)0xFFFFFA0FL) &= ~(1<<5);
     
     if (!audio || !audio->hidden) {
         return;
     }
     
     hidden = audio->hidden;
-    
     if (!hidden->playing) {
         return;
     }
 
-    /* Fill the DMA buffer with audio data */
-    SDL_LockMutex(audio->mixer_lock);
-    if (!hidden->paused) {
-        if (audio->callbackspec.callback) {
-            audio->callbackspec.callback(audio->callbackspec.userdata,
-                                       hidden->mixbuf,
-                                       hidden->mixlen);
-        }
-    } else {
-        SDL_memset(hidden->mixbuf, audio->spec.silence, hidden->mixlen);
+    if (!hidden->paused && audio->callbackspec.callback) {
+        // Fill next buffer while current one is playing
+        Uint8 *next_buffer = (hidden->current_buffer == hidden->buffer_a) ? 
+                             hidden->buffer_b : hidden->buffer_a;
+        
+        audio->callbackspec.callback(audio->callbackspec.userdata,
+                                   next_buffer,
+                                   hidden->mixlen);
+        
+        Setbuffer(SR_PLAY, next_buffer, next_buffer + hidden->mixlen);
+        hidden->current_buffer = next_buffer;
     }
-    SDL_UnlockMutex(audio->mixer_lock);
+    loadNewSample = 1;
 }
 
-int mint_audio_open(_THIS, SDL_AudioSpec *spec)
+static void enableTimerA(void)
 {
-    struct SDL_PrivateAudioData *hidden;
-    Uint32 freq;
-    Uint8 format;
+    *((volatile unsigned char*)0xFFFFFA17L) |= (1<<3);
+}
 
-    /* Set the current audio device */
-    SDL_SetCurrentAudioDevice(_this);
-    hidden = _this->hidden;
-    freq = spec->freq;
+int mint_audio_open(SDL_AudioDevice *device, SDL_AudioSpec *spec)
+{
+    struct SDL_PrivateAudioData *hidden = device->hidden;
+    int prescale;
     
-    /* Set audio format */
-    switch (spec->format & ~SDL_AUDIO_MASK_ENDIAN) {
-        case AUDIO_S8:
-        case AUDIO_U8:
-            spec->format = AUDIO_U8;
-            format = FALCON_8BIT;
-            break;
-        case AUDIO_S16MSB:
-        case AUDIO_S16LSB:
-            spec->format = AUDIO_S16MSB;
-            format = FALCON_16BIT;
-            break;
-        default:
-            SDL_SetError("Unsupported audio format");
-            return -1;
+    current_audio = device;
+    
+    prescale = ((25175000 >> 8) / spec->freq - 1);
+    
+    hidden->mixlen = spec->size;
+    hidden->buffer_a = (Uint8 *)Mxalloc(hidden->mixlen, MX_STRAM);
+    hidden->buffer_b = (Uint8 *)Mxalloc(hidden->mixlen, MX_STRAM);
+    
+    if (!hidden->buffer_a || !hidden->buffer_b) {
+        return SDL_SetError("Failed to allocate ST RAM buffers");
     }
     
-    /* Set channels */
-    format |= (spec->channels > 1) ? FALCON_STEREO : FALCON_MONO;
+    SDL_memset(hidden->buffer_a, 0, hidden->mixlen);
+    SDL_memset(hidden->buffer_b, 0, hidden->mixlen);
+    hidden->current_buffer = hidden->buffer_a;
     
-    /* Set frequency */
-    switch(freq) {
-        case 8000:
-            format |= FALCON_FREQ_8K;
-            break;
-        case 11025:
-            format |= FALCON_FREQ_11K;
-            break;
-        case 16000:
-            format |= FALCON_FREQ_16K;
-            break;
-        case 22050:
-            format |= FALCON_FREQ_22K;
-            break;
-        case 32000:
-            format |= FALCON_FREQ_32K;
-            break;
-        case 44100:
-            format |= FALCON_FREQ_44K;
-            break;
-        case 48000:
-            format |= FALCON_FREQ_48K;
-            break;
-        default:
-            SDL_SetError("Unsupported frequency");
-            return -1;
-    }
+    // Stop any ongoing DMA
+    Buffoper(0x00);
+    Jdisint(MFP_TIMERA);
     
-    /* Setup DMA */
-    if (Soundcmd(SNDLOCKED, 0) == SNDLOCKED) {
-        SDL_SetError("Audio hardware already in use");
-        return -1;
-    }
+    // Setup DMA
+    Devconnect(DMAPLAY, DAC, CLK25M, prescale, NO_SHAKE);
+    Setmode(MODE_STEREO16);
+    Settracks(0, 1);
+    Setmontracks(0);
     
-    /* Set hardware parameters */
-    Devconnect(DMAPLAY, DAC, CLKEXT, format, 1);
-    
-    /* Setup interrupt handler */
-    Xbtimer(XB_TIMERA, 8, 1, mint_audio_callback);
+    // Setup timer
+    Setinterrupt(SI_TIMERA, SI_PLAY);
+    Xbtimer(XB_TIMERA, 1<<3, 1, mint_audio_callback);
+    Supexec(enableTimerA);
     
     hidden->playing = 0;
     hidden->paused = 0;
@@ -118,36 +83,48 @@ int mint_audio_open(_THIS, SDL_AudioSpec *spec)
     return 0;
 }
 
-void mint_audio_close(_THIS)
+void mint_audio_start(SDL_AudioDevice *device)
 {
-    /* Stop DMA */
-    Soundcmd(SNDLOCKED, 0);
-    
-    /* Remove interrupt handler */
-    Xbtimer(XB_TIMERA, 0, 1, NULL);
-}
-
-void mint_audio_start(_THIS)
-{
-    struct SDL_PrivateAudioData *hidden = _this->hidden;
+    struct SDL_PrivateAudioData *hidden = device->hidden;
     
     if (!hidden->playing) {
         hidden->playing = 1;
-        Setmode(MODE_STEREO16);
-        Settracks(0, 1);
-        Setmontracks(0);
-        Setinterrupt(SI_TIMERA, SI_PLAY);
-        Buffoper(1);
+        
+        Setbuffer(SR_PLAY, hidden->current_buffer, 
+                 hidden->current_buffer + hidden->mixlen);
+        
+        Jenabint(MFP_TIMERA);
+        Buffoper(SB_PLA_ENA | SB_PLA_RPT);
+        loadNewSample = 1;
     }
 }
 
-void mint_audio_stop(_THIS)
+void mint_audio_stop(SDL_AudioDevice *device)
 {
-    struct SDL_PrivateAudioData *hidden = _this->hidden;
+    struct SDL_PrivateAudioData *hidden = device->hidden;
     
     if (hidden->playing) {
         hidden->playing = 0;
-        Buffoper(0);
+        Buffoper(0x00);
+        Jdisint(MFP_TIMERA);
         Setinterrupt(SI_TIMERA, SI_NONE);
     }
+}
+
+void mint_audio_close(SDL_AudioDevice *device)
+{
+    struct SDL_PrivateAudioData *hidden = device->hidden;
+    
+    Buffoper(0x00);
+    Jdisint(MFP_TIMERA);
+    
+    if (hidden->buffer_a) {
+        Mfree(hidden->buffer_a);
+    }
+    if (hidden->buffer_b) {
+        Mfree(hidden->buffer_b);
+    }
+    
+    Soundcmd(SNDLOCKED, 0);
+    Xbtimer(XB_TIMERA, 0, 1, NULL);
 }
