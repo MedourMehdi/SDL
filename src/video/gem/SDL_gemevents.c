@@ -52,9 +52,9 @@ void GEM_PumpEvents(_THIS)
                       interval,            /* Timer delay */
                       &mx, &my,           /* Mouse position */
                       &buttons,           /* Button state */
-                      &kstate, 0,           /* Key state */
-                      &key_state)) {      /* Key scan code */
-        
+                      &kstate,           /* Key state */
+                      &key_state, 0)) {      /* Key scan code */
+
         printf("evnt_multi returned true\n");
         /* Handle GEM messages first */
         if (msg[0]) {  /* If there's a message */
@@ -82,18 +82,12 @@ void GEM_PumpEvents(_THIS)
                     break;
                     case WM_MOVED:
                     {
-                        if (win_data && msg[3] == win_data->handle) {
-                            // int oldx = window->x;
-                            // int oldy = window->y;                            
+                        if (win_data && msg[3] == win_data->handle) {                      
                             printf("DEBUG: WM_MOVED received: x=%d, y=%d\n", msg[4], msg[5]);
                             printf("Window position before move: x=%d, y=%d\n", window->x, window->y);
-                            /* Update internal position */
-                            // window->x = msg[4];
-                            // window->y = msg[5];
+                            SDL_SetWindowPosition(window, msg[4], msg[5]);
+                            // SDL_SendWindowEvent(window, SDL_WINDOWEVENT_MOVED, msg[4], msg[5]);
                             // printf("Window position after move: x=%d, y=%d\n", window->x, window->y);
-                            // SDL_SetWindowPosition(window, msg[4], msg[5]);
-                            SDL_SendWindowEvent(window, SDL_WINDOWEVENT_MOVED, msg[4], msg[5]);
-                            // SDL_SendWindowEvent(window, SDL_WINDOWEVENT_MOVED, oldx, oldy);
                             if (window) {
                                 printf("Window event queuing status:\n");
                                 printf("- Window ID: %d\n", window->id);
@@ -201,21 +195,35 @@ void GEM_PumpEvents(_THIS)
         }
 
         /* Handle keyboard events */
+        // if (key_state) {
+        //     printf("Raw Atari scancode: 0x%02x\n", key_state);
+        //     SDL_memset(&event, 0, sizeof(event));
+        //     event.key.keysym.scancode = ATARI_MapScancode(key_state & 0xFF);
+        //     event.key.keysym.sym = ATARI_MapKey(key_state & 0xFF);
+        //     event.key.keysym.mod = ATARI_ModState();
+            
+        //     event.type = (kstate & K_RSHIFT) ? SDL_KEYDOWN : SDL_KEYUP;
+        //     event.key.state = (kstate & K_RSHIFT) ? SDL_PRESSED : SDL_RELEASED;
+            
+        //     SDL_PushEvent(&event);
+        // }
         if (key_state) {
-            printf("Keyboard event: scancode=%d, state=%s\n", 
-                key_state, (kstate & K_RSHIFT) ? "pressed" : "released");
+            Uint8 scancode;
+            printf("Raw Atari scancode: 0x%04x\n", key_state);
+            
+            // Extract actual scancode - remove the high byte
+            scancode = key_state & 0xFF;
+            if (scancode == 0x1b) scancode = 0x01;  // Map ESC correctly
+            if (scancode == 0x0d) scancode = 0x1c;  // Map Return correctly
+            
             SDL_memset(&event, 0, sizeof(event));
-            event.key.keysym.scancode = ATARI_MapScancode(key_state);
-            event.key.keysym.sym = ATARI_MapKey(key_state);
+            event.key.keysym.scancode = ATARI_MapScancode(scancode);
+            event.key.keysym.sym = ATARI_MapKey(scancode);
             event.key.keysym.mod = ATARI_ModState();
             
-            if (kstate & K_RSHIFT) {
-                event.type = SDL_KEYDOWN;
-                event.key.state = SDL_PRESSED;
-            } else {
-                event.type = SDL_KEYUP;
-                event.key.state = SDL_RELEASED;
-            }
+            // Key state from high byte
+            event.type = (key_state & 0x0100) ? SDL_KEYDOWN : SDL_KEYUP;
+            event.key.state = (key_state & 0x0100) ? SDL_PRESSED : SDL_RELEASED;
             
             SDL_PushEvent(&event);
         }
