@@ -208,14 +208,13 @@ void GEM_PumpEvents(_THIS)
         //     SDL_PushEvent(&event);
         // }
         if (key_state) {
-            Uint8 scancode;
+            Uint16 scancode;
             printf("Raw Atari scancode: 0x%04x\n", key_state);
             
             // Extract actual scancode - remove the high byte
-            scancode = key_state & 0xFF;
-            if (scancode == 0x1b) scancode = 0x01;  // Map ESC correctly
-            if (scancode == 0x0d) scancode = 0x1c;  // Map Return correctly
-            
+            scancode = (key_state >> 8) & 0xFF;
+            // scancode = key_state & 0xFF;
+            printf("Extracted scancode: 0x%02x\n", scancode);
             SDL_memset(&event, 0, sizeof(event));
             event.key.keysym.scancode = ATARI_MapScancode(scancode);
             event.key.keysym.sym = ATARI_MapKey(scancode);

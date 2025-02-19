@@ -92,14 +92,28 @@ SDL_Keycode ATARI_MapKey(int scancode)
 Uint16 ATARI_ModState(void)
 {
     Uint16 mod = KMOD_NONE;
-    Uint16 kstate;
+    Uint8 kbshift = Kbshift(-1);
 
-    kstate = Kbshift(-1);
-
-    if (kstate & 0x03) mod |= KMOD_SHIFT;    /* Right or Left shift */
-    if (kstate & 0x04) mod |= KMOD_CTRL;     /* Control */
-    if (kstate & 0x08) mod |= KMOD_ALT;      /* Alternate */
-    if (kstate & 0x10) mod |= KMOD_CAPS;     /* Caps Lock */
+    if (kbshift & 0x01) mod |= KMOD_LSHIFT;
+    if (kbshift & 0x02) mod |= KMOD_RSHIFT;
+    if (kbshift & 0x04) mod |= KMOD_CTRL;
+    if (kbshift & 0x08) mod |= KMOD_ALT;
+    if (kbshift & 0x10) mod |= KMOD_CAPS;
 
     return mod;
 }
+
+// Uint16 ATARI_ModState(void)
+// {
+//     Uint16 mod = KMOD_NONE;
+//     Uint16 kstate;
+
+//     kstate = Kbshift(-1);
+
+//     if (kstate & 0x03) mod |= KMOD_SHIFT;    /* Right or Left shift */
+//     if (kstate & 0x04) mod |= KMOD_CTRL;     /* Control */
+//     if (kstate & 0x08) mod |= KMOD_ALT;      /* Alternate */
+//     if (kstate & 0x10) mod |= KMOD_CAPS;     /* Caps Lock */
+
+//     return mod;
+// }
