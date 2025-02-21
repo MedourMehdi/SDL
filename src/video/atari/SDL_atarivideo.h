@@ -15,6 +15,6 @@ typedef struct SDL_VideoData {
 } SDL_VideoData;
 
 /* Function prototypes are now private to the implementation */
-void ATARI_InitModes(_THIS);
+int ATARI_InitModes(_THIS);
 
 #endif /* SDL_atarivideo_h_ */

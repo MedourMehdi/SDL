@@ -52,7 +52,20 @@ int GEM_CreateWindow(_THIS, SDL_Window *window)
     wind_set_str(data->handle, WF_NAME, window->title);
 
     /* Create framebuffer immediately */
-    data->buffer = SDL_malloc(window->h * ((window->w * 16 + 31) & ~31) / 8);
+    // Determine pixel format and calculate pitch
+    switch (video->planes) {
+        case 24:  // 24bpp
+            data->buffer = SDL_malloc(window->h * (window->w * 3));
+            break;
+        case 32: // 32bpp
+            data->buffer = SDL_malloc(window->h * (window->w * 4));
+            break;
+        case 16: // 16bpp
+        default:
+            data->buffer = SDL_malloc(window->h * ((window->w * 16 + 31) & ~31) / 8);
+            break;
+    }    
+    // data->buffer = SDL_malloc(window->h * ((window->w * 16 + 31) & ~31) / 8);
     if (!data->buffer) {
         wind_delete(data->handle);
         SDL_free(data);
@@ -75,14 +88,34 @@ int GEM_CreateWindow(_THIS, SDL_Window *window)
 int GEM_CreateWindowFramebuffer(_THIS, SDL_Window *window, Uint32 *format,
     void **pixels, int *pitch)
 {
+    struct SDL_VideoData *video = (struct SDL_VideoData *)_this->driverdata;
     SDL_WindowData *data = (SDL_WindowData *)window->driverdata;
 
     if (!data) {
         return SDL_SetError("Window data not found");
     }
 
-    *format = SDL_PIXELFORMAT_RGB565;
-    *pitch = ((window->w * 16 + 31) & ~31) / 8;
+    // Determine pixel format and calculate pitch
+    switch (video->planes) {
+        case 24:  // 24bpp
+            *format = SDL_PIXELFORMAT_RGB888;
+            *pitch = window->w * 3; // 3 bytes per pixel
+            data->buffer = SDL_malloc(window->h * (*pitch));
+            break;
+        case 32: // 32bpp
+            *format = SDL_PIXELFORMAT_ARGB8888;
+            *pitch = window->w * 4; // 4 bytes per pixel
+            data->buffer = SDL_malloc(window->h * (*pitch));
+            break;
+        case 16: // 16bpp
+        default:
+            *format = SDL_PIXELFORMAT_RGB565;
+            *pitch = ((window->w * 16 + 31) & ~31) / 8; // 2 bytes per pixel
+            data->buffer = SDL_malloc(window->h * (*pitch));
+            break;
+    }
+    // *format = SDL_PIXELFORMAT_RGB565;
+    // *pitch = ((window->w * 16 + 31) & ~31) / 8;
     *pixels = data->buffer;
 
     return 0;

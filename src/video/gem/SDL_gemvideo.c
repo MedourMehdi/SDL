@@ -184,8 +184,7 @@ int GEM_VideoInit(_THIS)
     data->vdi_handle = graf_handle(&work_out[0], &work_out[1], 
                                   &work_out[2], &work_out[3]);
 
-    /* Hardcoded 16bpp for now */
-    data->planes = 16;
+    printf(" PLANES = %d\n", data->planes);
     for (i = 0; i < 10; i++) {
         work_in[i] = 1;
     }
@@ -198,10 +197,25 @@ int GEM_VideoInit(_THIS)
     }else{
         printf("GEM: VDI handle = %d\n", data->vdi_handle);
     }
+	vq_extnd(data->vdi_handle,1,work_out);
 
+    data->planes = work_out[4];
+    
     /* Add display mode */
     SDL_zero(mode);
-    mode.format = SDL_PIXELFORMAT_RGB565;
+    switch (data->planes) {
+        case 24:  // 24bpp
+            mode.format = SDL_PIXELFORMAT_RGB888;
+            break;
+        case 32: // 32bpp
+            mode.format = SDL_PIXELFORMAT_ARGB8888;
+            break;
+        case 16: // 16bpp
+        default:
+            mode.format = SDL_PIXELFORMAT_RGB565;
+            break;
+    }
+    // mode.format = SDL_PIXELFORMAT_RGB565;
     mode.w = data->desk_x;
     mode.h = data->desk_y;
     mode.refresh_rate = 60;

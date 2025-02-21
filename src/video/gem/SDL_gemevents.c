@@ -143,10 +143,12 @@ void GEM_PumpEvents(_THIS)
                     case WM_SIZED:
                     {
                         if (win_data && msg[3] == win_data->handle) {
-                        window->w = msg[6];
-                        window->h = msg[7];
-                        SDL_SendWindowEvent(window,
-                            SDL_WINDOWEVENT_RESIZED, msg[6], msg[7]);
+                        // window->w = msg[6];
+                        // window->h = msg[7];
+                        // SDL_OnWindowResized(window);
+                        SDL_SetWindowSize(window, msg[6], msg[7]);
+                        // SDL_SendWindowEvent(window,
+                        //     SDL_WINDOWEVENT_RESIZED, msg[6], msg[7]);
                         }
                     }
                     break;
