@@ -107,6 +107,9 @@ int SDL_SendWindowEvent(SDL_Window *window, Uint8 windowevent, int data1,
     case SDL_WINDOWEVENT_MOVED:
         if (SDL_WINDOWPOS_ISUNDEFINED(data1) ||
             SDL_WINDOWPOS_ISUNDEFINED(data2)) {
+                SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
+                            "SDL_SendWindowEvent: Ignoring move to undefined position %d,%d",
+                            data1, data2);
             return 0;
         }
         if (!(window->flags & SDL_WINDOW_FULLSCREEN)) {
@@ -114,6 +117,9 @@ int SDL_SendWindowEvent(SDL_Window *window, Uint8 windowevent, int data1,
             window->windowed.y = data2;
         }
         if (data1 == window->x && data2 == window->y) {
+            SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
+                        "SDL_SendWindowEvent: Ignoring move to same position %d,%d",
+                        data1, data2);
             return 0;
         }
         window->x = data1;

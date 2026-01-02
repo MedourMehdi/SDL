@@ -3138,6 +3138,10 @@ dnl This is used on Linux for glibc binary compatibility (Doh!)
             pthread_cflags="-D_REENTRANT"
             pthread_lib="-L/usr/lib -lpthread"
             ;;
+        m68k-atari-mint*)    
+            pthread_cflags=""
+            pthread_lib=""
+            ;;        
         *-*-haiku*)
             pthread_cflags="-D_REENTRANT"
             pthread_lib=""
@@ -3784,11 +3788,11 @@ case "$host" in
                     AC_MSG_ERROR([GEM library not found])
                 fi
                 # Set up files for the thread library
-                if test x$enable_atari_threads = xyes; then
-                    AC_DEFINE(SDL_THREAD_ATARI, 1, [ ])
-                    SOURCES="$SOURCES $srcdir/src/thread/atari/*.c"
-                    have_threads=yes
-                fi
+                # if test x$enable_atari_threads = xyes; then
+                #     AC_DEFINE(SDL_THREAD_ATARI, 1, [ ])
+                #     SOURCES="$SOURCES $srcdir/src/thread/atari/*.c"
+                #     have_threads=yes
+                # fi
                 # Set up compiler flags
                 CFLAGS="$CFLAGS -fomit-frame-pointer -fno-strict-aliasing -O2"
                 CXXFLAGS="$CXXFLAGS -fomit-frame-pointer -fno-strict-aliasing -O2"

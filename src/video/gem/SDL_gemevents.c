@@ -1,302 +1,271 @@
-#include "SDL_gemevents.h"
+/* ============================================
+   FILE: src/video/gem/SDL_gemevents.c
+   GEM event handling - FINAL PRODUCTION VERSION
+   ============================================ */
+
+#include "../../SDL_internal.h"
 #include "SDL_gemvideo.h"
-#include "SDL_gemwindow.h"
-#include "SDL_events.h"
 #include "../ataricommon/SDL_atarikeys.h"
-#include <gem.h>
 
-int SDL_SendWindowEvent(SDL_Window *window, Uint8 windowevent,
-    int data1, int data2);
+#ifdef SDL_VIDEO_DRIVER_GEM
 
-static short int mouse_buttons = 0;
-static short int mouse_x = 0;
-static short int mouse_y = 0;
+/* GEM event variables */
+static short mx = 0, my = 0; /* Mouse coordinates */
+static short last_mb = 0; /* Last mouse button clicked */
+static short mb = 0; /* Mouse button clicked */
+static short mc = 0; /* Mouse click count */
+// static short ms = 0; /* Mouse button state tested by default */
+static short kstate, key_state;
+static short msg[8];
+static short gem_events;
+static SDL_Event event;
+static SDL_Window *window;
+static SDL_WindowData *win_data;
 
 void GEM_InitEvents(_THIS)
 {
-    /* Initialize mouse */
-    graf_mouse(M_ON, NULL);
-
-    /* Set initial mouse position */
-    graf_mkstate(&mouse_x, &mouse_y, &mouse_buttons, NULL);
+    return;
 }
 
 void GEM_QuitEvents(_THIS)
 {
-    /* Nothing to do here */
+    /* Nothing to clean up */
 }
 
 void GEM_PumpEvents(_THIS)
 {
-    static int call_count = 0;
+    gem_events = mt_evnt_multi(MU_MESAG | MU_KEYBD | MU_BUTTON | MU_M1 | MU_TIMER,
+                //    256 | 1, 3, ms,
+                   0x101, 3, (~mb) & 3,
+                   0, 0, 0, 0, 0,
+                   0, 0, 0, 0, 0,
+                   msg, 1L,
+                   &mx, &my, &mb, &kstate, &key_state, &mc, sdl_global_aes);
+    if (!gem_events) {
+        return;
+    }
 
-    short event_mask, mx, my, buttons, kstate, key_state;
-    short msg[8];
-    SDL_Event event;
-    unsigned long interval = 0;  /* No timer delay */
-    int windowEventsEnabled = SDL_EventState(SDL_WINDOWEVENT, SDL_QUERY);
-
-    printf("GEM_PumpEvents called (%d)\n", ++call_count);
-    printf("Window events enabled: %d\n", windowEventsEnabled);
-    printf("DEBUG: Thread ID for event pump: %ld\n", SDL_ThreadID());
-
-    /* Handle events */
-    event_mask = MU_MESAG | MU_KEYBD | MU_BUTTON | MU_M1;
-    printf("Event mask: 0x%04x\n", event_mask);
-
-    if (evnt_multi(event_mask,
-                      0x03, 0x03, 0x01,   /* Mouse button state */
-                      0, 0, 0, 0, 0,      /* Mouse rectangle */
-                      0, 0, 0, 0, 0,      /* Second mouse rectangle */
-                      msg,                 /* Message buffer */
-                      interval,            /* Timer delay */
-                      &mx, &my,           /* Mouse position */
-                      &buttons,           /* Button state */
-                      &kstate,           /* Key state */
-                      &key_state, 0)) {      /* Key scan code */
-
-        printf("evnt_multi returned true\n");
-        /* Handle GEM messages first */
-        if (msg[0]) {  /* If there's a message */
-            SDL_Window *window = NULL;
-            SDL_WindowData *win_data = NULL;
-            /* Find window from handle */
-            for (window = _this->windows; window != NULL; window = window->next) {
-                win_data = (SDL_WindowData *)window->driverdata;
-                if (win_data->handle == msg[3]) {
-                    printf("Found matching window: id=%d\n", window->id);
-                    break;
-                }
+    /* ==== Handle GEM messages ==== */
+    if (gem_events & MU_MESAG) {
+        for (window = _this->windows; window != NULL; window = window->next) {
+            win_data = (SDL_WindowData *)window->driverdata;
+            if (win_data->handle == msg[3]) {
+                printf("Found matching window: id=%d, handle=%d, message %d\n", window->id, win_data->handle, msg[0]);
+                break;
             }
-
-            if (window) {
-                switch (msg[0]) {
-                    case WM_REDRAW:
-                    {   
-                        /* Verify this redraw is for our window */
-                        if (win_data && msg[3] == win_data->handle) {
-                            /* Let SDL handle the redraw through the standard exposure event */
-                            SDL_SendWindowEvent(window, SDL_WINDOWEVENT_EXPOSED, 0, 0);
-                        }
-                    }
-                    break;
-                    case WM_MOVED:
-                    {
-                        if (win_data && msg[3] == win_data->handle) {                      
-                            printf("DEBUG: WM_MOVED received: x=%d, y=%d\n", msg[4], msg[5]);
-                            printf("Window position before move: x=%d, y=%d\n", window->x, window->y);
-                            SDL_SetWindowPosition(window, msg[4], msg[5]);
-                            // SDL_SendWindowEvent(window, SDL_WINDOWEVENT_MOVED, msg[4], msg[5]);
-                            // printf("Window position after move: x=%d, y=%d\n", window->x, window->y);
-                            if (window) {
-                                printf("Window event queuing status:\n");
-                                printf("- Window ID: %d\n", window->id);
-                                printf("- Event type: %d\n", SDL_WINDOWEVENT_MOVED);
-                                printf("- Coordinates: %d,%d\n", msg[4], msg[5]);
-                            }                            
-                        }
-                    }
-                    break;
-                    case WM_TOPPED:
-                        wind_set(msg[3], WF_TOP, 0, 0, 0, 0);
-                        printf("Processing WM_TOPPED\n");
-                        SDL_memset(&event, 0, sizeof(event));
-                        event.type = SDL_WINDOWEVENT;
-                        event.window.event = SDL_WINDOWEVENT_SHOWN;
-                        event.window.windowID = window->id;
-                        SDL_PushEvent(&event);
-                        break;
-                
-                    case WM_CLOSED:
-                        /* Window close button clicked */
-                        SDL_SendWindowEvent(window,
-                            SDL_WINDOWEVENT_CLOSE, 0, 0);
-                        break;
-                
-                    case WM_FULLED:
-                        /* Window maximized/restored */
-                        SDL_memset(&event, 0, sizeof(event));
-                        event.type = SDL_WINDOWEVENT;
-                        event.window.event = SDL_WINDOWEVENT_MAXIMIZED;
-                        event.window.windowID = window->id;
-                        SDL_PushEvent(&event);
-                        break;
-                
-                    case WM_ICONIFY:
-                        /* Window minimized */
-                        SDL_memset(&event, 0, sizeof(event));
-                        event.type = SDL_WINDOWEVENT;
-                        event.window.event = SDL_WINDOWEVENT_MINIMIZED;
-                        event.window.windowID = window->id;
-                        SDL_PushEvent(&event);
-                        break;
-                
-                    case WM_UNICONIFY:
-                        /* Window restored from minimized state */
-                        SDL_memset(&event, 0, sizeof(event));
-                        event.type = SDL_WINDOWEVENT;
-                        event.window.event = SDL_WINDOWEVENT_RESTORED;
-                        event.window.windowID = window->id;
-                        SDL_PushEvent(&event);
-                        break;
-                
-                    case WM_SIZED:
-                    {
-                        if (win_data && msg[3] == win_data->handle) {
-                        // window->w = msg[6];
-                        // window->h = msg[7];
-                        // SDL_OnWindowResized(window);
-                        SDL_SetWindowSize(window, msg[6], msg[7]);
-                        // SDL_SendWindowEvent(window,
-                        //     SDL_WINDOWEVENT_RESIZED, msg[6], msg[7]);
-                        }
-                    }
-                    break;
-                }
-            }
-        } else {
-            printf("evnt_multi returned false\n");
         }
-
-        /* Handle mouse movement */
-        if (mx != mouse_x || my != mouse_y) {
-            printf("Mouse moved: x=%d, y=%d (rel: %d,%d)\n", 
-                mx, my, mx - mouse_x, my - mouse_y);
-            SDL_memset(&event, 0, sizeof(event));
-            event.type = SDL_MOUSEMOTION;
-            event.motion.x = mx;
-            event.motion.y = my;
-            event.motion.xrel = mx - mouse_x;
-            event.motion.yrel = my - mouse_y;
-            SDL_PushEvent(&event);
-
-            mouse_x = mx;
-            mouse_y = my;
+        if (!window) {
+            SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "GEM event for invalid window ID %d, aes handle %d, message %d", msg[3], msg[3], msg[0]);
+            return;  /* Ignore zombie events */
         }
-
-        /* Handle mouse buttons */
-        if (buttons != mouse_buttons) {
-            int changed = buttons ^ mouse_buttons;
-            int i;
-            printf("Mouse buttons changed: old=%d new=%d\n", mouse_buttons, buttons);
-
-            for (i = 0; i < 3; i++) {
-                if (changed & (1 << i)) {
-                    printf("Button %d %s\n", i + 1, 
-                        (buttons & (1 << i)) ? "pressed" : "released");
-                    SDL_memset(&event, 0, sizeof(event));
-                    event.type = (buttons & (1 << i)) ? 
-                                SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
-                    event.button.button = i + 1;
-                    event.button.x = mx;
-                    event.button.y = my;
-                    SDL_PushEvent(&event);
-                }
-            }
-            mouse_buttons = buttons;
-        }
-
-        /* Handle keyboard events */
-        // if (key_state) {
-        //     printf("Raw Atari scancode: 0x%02x\n", key_state);
-        //     SDL_memset(&event, 0, sizeof(event));
-        //     event.key.keysym.scancode = ATARI_MapScancode(key_state & 0xFF);
-        //     event.key.keysym.sym = ATARI_MapKey(key_state & 0xFF);
-        //     event.key.keysym.mod = ATARI_ModState();
-            
-        //     event.type = (kstate & K_RSHIFT) ? SDL_KEYDOWN : SDL_KEYUP;
-        //     event.key.state = (kstate & K_RSHIFT) ? SDL_PRESSED : SDL_RELEASED;
-            
-        //     SDL_PushEvent(&event);
+        SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "GEM event %d for window ID %d", msg[0], msg[3]);
+        // win_data = (SDL_WindowData *)window->driverdata;
+        // if (!win_data || win_data->handle != msg[3]) {
+        //     return;  /* Stale handle */
         // }
-        if (key_state) {
-            Uint16 scancode;
-            printf("Raw Atari scancode: 0x%04x\n", key_state);
+
+        switch (msg[0]) {
+            /* Fuller box clicked - let SDL handle state */
+            case WM_FULLED:
+                if (win_data && msg[3] == win_data->handle){
+                    /* Toggle maximize state FIRST to prevent race condition */
+                    win_data->is_maximized = !win_data->is_maximized;
+                    if (win_data->is_maximized) {
+                        SDL_MaximizeWindow(window); /* SDL calls GEM_MaximizeWindow */
+                    } else {
+                        SDL_RestoreWindow(window);  /* SDL calls GEM_RestoreWindow */
+                    }
+                    /* SDL sends MAXIMIZED/RESTORED events automatically - don't send here! */
+                }
+                break;
+                    
+            case WM_ICONIFY:
+                if (win_data && msg[3] == win_data->handle) SDL_MinimizeWindow(window);
+                /* SDL sends MINIMIZED event automatically */
+                break;
+                    
+            case WM_UNICONIFY:
+                if (win_data && msg[3] == win_data->handle) SDL_RestoreWindow(window);
+                /* SDL sends RESTORED event automatically */
+                break;
+                    
+            case WM_CLOSED:
+                if (win_data && msg[3] == win_data->handle) SDL_SendWindowEvent(window, SDL_WINDOWEVENT_CLOSE, 0, 0);
+                break;
+
+            /* ==== RULE 1: External changes → Update SDL state + notify ==== */
             
-            // Extract actual scancode - remove the high byte
-            scancode = (key_state >> 8) & 0xFF;
-            // scancode = key_state & 0xFF;
-            printf("Extracted scancode: 0x%02x\n", scancode);
-            SDL_memset(&event, 0, sizeof(event));
+            /* Window was moved externally by window manager */
+            case WM_MOVED:
+            if (win_data && msg[3] == win_data->handle){
+                SDL_SetWindowPosition(window, msg[4], msg[5]);
+                SDL_SendWindowEvent(window, SDL_WINDOWEVENT_MOVED, msg[4], msg[5]);
+            }
+            break;
+                    
+            /* Window was resized externally by window manager */
+            case WM_SIZED:
+                if (win_data && msg[3] == win_data->handle){
+                    SDL_SetWindowSize(window, msg[6], msg[7]);
+                    SDL_SendWindowEvent(window, SDL_WINDOWEVENT_SIZE_CHANGED, msg[6], msg[7]);
+                }
+                break;
+                    
+            /* Window gained focus */
+            case WM_TOPPED:
+                if (win_data && msg[3] == win_data->handle) {
+                    mt_wind_set(msg[3], WF_TOP, 0, 0, 0, 0, sdl_global_aes);
+                    SDL_SendWindowEvent(window, SDL_WINDOWEVENT_FOCUS_GAINED, 0, 0);  
+                    // /* FIX: Force redraw when gaining focus */
+                    // SDL_SendWindowEvent(window, SDL_WINDOWEVENT_EXPOSED, 0, 0);
+                }
+                break;
+            case WM_UNTOPPED:
+                if (win_data && msg[3] == win_data->handle) {
+                    SDL_SendWindowEvent(window, SDL_WINDOWEVENT_FOCUS_LOST, 0, 0);
+                }
+                break;
+            /* Window needs redraw - NEVER call VDI functions here! */
+            // case WM_REDRAW:
+            //     if (win_data && msg[3] == win_data->handle) {
+            //         /* Store the clipping rectangle provided by GEM msg[4-7] */
+            //         win_data->gem_clip_rect.g_x = msg[4];
+            //         win_data->gem_clip_rect.g_y = msg[5];
+            //         win_data->gem_clip_rect.g_w = msg[6];
+            //         win_data->gem_clip_rect.g_h = msg[7];
+                    
+            //         /* Mark this window as needing a GEM-style redraw */
+            //         win_data->in_gem_redraw = SDL_TRUE;
+            //         printf("WM_REDRAW: clip_rect=(%d,%d,%d,%d)\n", 
+            //             msg[4], msg[5], msg[6], msg[7]);
+            //         /* Tell SDL to call UpdateWindowFramebuffer */
+            //         SDL_SendWindowEvent(window, SDL_WINDOWEVENT_EXPOSED, 0, 0);
+            //     }
+            //     break;
+case WM_REDRAW:
+    if (win_data && msg[3] == win_data->handle) {
+        GRECT work;
+        SDL_Rect sdl_rect;
+        
+        /* Get window work area */
+        mt_wind_get_grect(win_data->handle, WF_WORKXYWH, &work, sdl_global_aes);
+        
+        /* Convert GEM screen coordinates to window-relative SDL coordinates */
+        sdl_rect.x = msg[4] - work.g_x;
+        sdl_rect.y = msg[5] - work.g_y;
+        sdl_rect.w = msg[6];
+        sdl_rect.h = msg[7];
+        
+        /* Clamp to window bounds */
+        if (sdl_rect.x < 0) {
+            sdl_rect.w += sdl_rect.x;
+            sdl_rect.x = 0;
+        }
+        if (sdl_rect.y < 0) {
+            sdl_rect.h += sdl_rect.y;
+            sdl_rect.y = 0;
+        }
+        if (sdl_rect.x + sdl_rect.w > window->w) {
+            sdl_rect.w = window->w - sdl_rect.x;
+        }
+        if (sdl_rect.y + sdl_rect.h > window->h) {
+            sdl_rect.h = window->h - sdl_rect.y;
+        }
+        
+        SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
+                    "WM_REDRAW: GEM rect=(%d,%d,%d,%d) -> SDL rect=(%d,%d,%d,%d)", 
+                    msg[4], msg[5], msg[6], msg[7],
+                    sdl_rect.x, sdl_rect.y, sdl_rect.w, sdl_rect.h);
+        
+        /* Store for use in UpdateWindowFramebuffer */
+        win_data->gem_clip_rect.g_x = msg[4];
+        win_data->gem_clip_rect.g_y = msg[5];
+        win_data->gem_clip_rect.g_w = msg[6];
+        win_data->gem_clip_rect.g_h = msg[7];
+        win_data->in_gem_redraw = SDL_TRUE;
+        
+        /* Tell SDL to redraw this specific rectangle */
+        if (window->surface && sdl_rect.w > 0 && sdl_rect.h > 0) {
+            SDL_UpdateWindowSurfaceRects(window, &sdl_rect, 1);
+        }
+    }
+    break;
+            default:
+                SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Unhandled GEM message %d for window ID %d", msg[0], msg[3]);
+                break;
+        }
+    }
+
+    if (gem_events & MU_BUTTON)
+    {
+        int x = mx - window->x;
+        int y = my - window->y;
+        if (x >= 0 && x < window->w && y >= 0 && y < window->h) {
+            SDL_SendMouseMotion(window, 0, 0, x, y);
+        }
+        switch (mb)
+        {
+            case 0:
+                break;
+            case 1:
+                SDL_SendMouseButton(window, 0, SDL_PRESSED, SDL_BUTTON_LEFT);
+                break;
+            case 2:
+                SDL_SendMouseButton(window, 0, SDL_PRESSED, SDL_BUTTON_RIGHT);
+                break;
+            default:
+                break;
+        }
+
+			if (mb != last_mb) {
+				for (short i = 0; i < 2; i++) {
+					short curbutton, prevbutton;
+
+					curbutton = mb & (1 << i);
+					prevbutton = last_mb & (1 << i);
+			
+					if (curbutton && !prevbutton) {
+						printf("Mouse: button %d pressed\n", i);
+                        SDL_SendMouseButton(window, 0, SDL_RELEASED, SDL_BUTTON_LEFT);
+                        SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Mouse: button %d pressed\n", i);
+					}
+					if (!curbutton && prevbutton) {
+						printf("Mouse: button %d released\n", i);
+                        SDL_SendMouseButton(window, 0, SDL_RELEASED, SDL_BUTTON_RIGHT);
+                        SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Mouse: button %d released\n", i);
+					}
+				}
+				last_mb = mb;
+			}
+
+    // if (last_mb != mb)
+    // {
+    //     if (last_mb == 1)
+    //     {
+    //         SDL_SendMouseButton(window, 0, SDL_RELEASED, SDL_BUTTON_LEFT);
+    //     }
+    //     else if (last_mb == 2)
+    //     {
+    //         SDL_SendMouseButton(window, 0, SDL_RELEASED, SDL_BUTTON_RIGHT);
+    //     }
+        
+    // }
+}
+
+    if(gem_events & MU_KEYBD){
+        /* ==== Keyboard handling ==== */
+        if (key_state) {
+            Uint16 scancode = (key_state >> 8) & 0xFF;
+            
+            SDL_zero(event);
             event.key.keysym.scancode = ATARI_MapScancode(scancode);
             event.key.keysym.sym = ATARI_MapKey(scancode);
             event.key.keysym.mod = ATARI_ModState();
-            
-            // Key state from high byte
-            event.type = (key_state & 0x0100) ? SDL_KEYDOWN : SDL_KEYUP;
-            event.key.state = (key_state & 0x0100) ? SDL_PRESSED : SDL_RELEASED;
-            
+            event.type = (kstate & K_RSHIFT) ? SDL_KEYDOWN : SDL_KEYUP;
+            event.key.state = (kstate & K_RSHIFT) ? SDL_PRESSED : SDL_RELEASED;
             SDL_PushEvent(&event);
         }
     }
 }
 
-
-// void GEM_PumpEvents(_THIS)
-// {
-//     short event_mask, mx, my, buttons, kstate, key_state;
-//     short msg[8];
-//     SDL_Event event;
-//     unsigned long interval = 0;  /* No timer delay */
-//     /* Handle events */
-//     event_mask = MU_MESAG | MU_KEYBD | MU_BUTTON | MU_M1;
-//     while (evnt_multi(event_mask,
-//                       0x03, 0x03, 0x01,   /* Mouse button state */
-//                       0, 0, 0, 0, 0,      /* Mouse rectangle */
-//                       0, 0, 0, 0, 0,      /* Second mouse rectangle */
-//                       msg,                 /* Message buffer */
-//                       interval,            /* Timer delay */
-//                       &mx, &my,           /* Mouse position */
-//                       &buttons,           /* Button state */
-//                       &kstate, 0,           /* Key state */
-//                       &key_state)) {      /* Key scan code */
-//         /* Handle mouse movement */
-//         if (mx != mouse_x || my != mouse_y) {
-//             SDL_memset(&event, 0, sizeof(event));
-//             event.type = SDL_MOUSEMOTION;
-//             event.motion.x = mx;
-//             event.motion.y = my;
-//             event.motion.xrel = mx - mouse_x;
-//             event.motion.yrel = my - mouse_y;
-//             SDL_PushEvent(&event);
-//             mouse_x = mx;
-//             mouse_y = my;
-//         }
-//         /* Handle mouse buttons */
-//         if (buttons != mouse_buttons) {
-//             int changed = buttons ^ mouse_buttons;
-//             int i;
-//             for (i = 0; i < 3; i++) {
-//                 if (changed & (1 << i)) {
-//                     SDL_memset(&event, 0, sizeof(event));
-//                     event.type = (buttons & (1 << i)) ? 
-//                                 SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
-//                     event.button.button = i + 1;
-//                     event.button.x = mx;
-//                     event.button.y = my;
-//                     SDL_PushEvent(&event);
-//                 }
-//             }
-//             mouse_buttons = buttons;
-//         }
-//         /* Handle keyboard events */
-//         if (key_state) {
-//             SDL_memset(&event, 0, sizeof(event));
-//             event.key.keysym.scancode = ATARI_MapScancode(key_state);
-//             event.key.keysym.sym = ATARI_MapKey(key_state);
-//             event.key.keysym.mod = ATARI_ModState();
-//             if (kstate & K_RSHIFT) {
-//                 event.type = SDL_KEYDOWN;
-//                 event.key.state = SDL_PRESSED;
-//             } else {
-//                 event.type = SDL_KEYUP;
-//                 event.key.state = SDL_RELEASED;
-//             }
-//             SDL_PushEvent(&event);
-//         }
-//         /* Handle GEM messages */
-//         if (event_mask & MU_MESAG) {
-//             GEM_HandleMessage(_this, msg);
-//         }
-//     }
-// }
+#endif /* SDL_VIDEO_DRIVER_GEM */

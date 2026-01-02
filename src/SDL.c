@@ -60,6 +60,12 @@ extern int SDL_HelperWindowCreate(void);
 extern int SDL_HelperWindowDestroy(void);
 #endif
 
+#ifdef __MINT__
+/* Global AES application ID required by GEM/XaAES */
+short gl_apid = -1;
+short sdl_global_aes[16] = {0};
+#endif
+
 #ifdef SDL_BUILD_MAJOR_VERSION
 SDL_COMPILE_TIME_ASSERT(SDL_BUILD_MAJOR_VERSION,
                         SDL_MAJOR_VERSION == SDL_BUILD_MAJOR_VERSION);
@@ -218,6 +224,16 @@ int SDL_InitSubSystem(Uint32 flags)
         return SDL_SetError("Application didn't initialize properly, did you include SDL_main.h in the file containing your main() function?");
     }
 
+#if defined(__MINT__)
+    /* Initialize threading before SDL */
+    pthread_setup_threading_np();
+    gl_apid = mt_appl_init(sdl_global_aes);
+    if (gl_apid < 0) {
+        /* Fatal error - cannot continue without AES */
+        SDL_LogDebug(SDL_LOG_CATEGORY_ERROR, "ATARI_GEM_Init: mt_appl_init() failed!");
+        Pterm(1);
+    }
+#endif
     /* Clear the error message */
     SDL_ClearError();
 
@@ -398,6 +414,15 @@ void SDL_QuitSubSystem(Uint32 flags)
 {
 #if defined(__OS2__)
     SDL_OS2Quit();
+#endif
+
+#if defined(__MINT__)
+    /* Cleanup AES - unregister from XaAES/GEM */
+    if (gl_apid >= 0) {
+        SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "ATARI_GEM_Quit: calling mt_appl_exit() for APID %d", gl_apid);
+        mt_appl_exit(sdl_global_aes);
+        gl_apid = -1;
+    }
 #endif
 
     /* Shut down requested initialized subsystems */

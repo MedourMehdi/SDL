@@ -446,7 +446,6 @@
 #undef SDL_VIDEO_DRIVER_GEM
 #undef SDL_AUDIO_DRIVER_ATARI
 #undef SDL_INPUT_ATARI
-#undef SDL_THREAD_ATARI
 #undef SDL_TIMER_ATARI
 
 /* Enable system power support */

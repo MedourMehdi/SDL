@@ -1,68 +1,97 @@
+/* ============================================
+   FILE: src/video/ataricommon/SDL_atarimodel.c
+   Hardware detection implementation
+   ============================================ */
 #include "SDL_atarimodel.h"
 #include <mint/cookie.h>
 #include <mint/osbind.h>
+#include <mint/sysvars.h>
 
-/* Cookie _MCH definitions */
+/* Cookie definitions */
 #define MCH_ST      0x00000000
 #define MCH_STE     0x00010000
 #define MCH_TT      0x00020000
 #define MCH_F30     0x00030000
+#define MCH_MILAN   0x00050000
+#define MCH_HADES   0x00040000
 #define MCH_MASK    0xFFFF0000
 
-/* Video hardware cookie values */
 #define VDO_ST     0x0000
 #define VDO_STE    0x0001
 #define VDO_TT     0x0002
 #define VDO_F30    0x0003
+#define VDO_NOVA   0x0010
+#define VDO_IMAGINE 0x0011
 
 atari_hw_info hw_info;
 
 void Atari_DetectHW(void)
 {
-    long cookie_cpu = 0;
-    long cookie_vdo = 0;
-    long cookie_snd = 0;
-    long cookie_mch = 0;
-    long cookie_swi = 0;
+    long cookie_mil = 0, cookie_hade = 0, cookie_nova = 0, cookie_imne = 0;
+    long cookie_cpu = 0, cookie_vdo = 0, cookie_snd = 0, cookie_mch = 0;
 
-    /* Clear hardware info */
-    SDL_memset(&hw_info, 0, sizeof(hw_info));
+    /* Initialize to unknown */
+    hw_info.cpu = ATARI_CPU_UNKNOWN;
+    hw_info.video = ATARI_VIDEO_ST;
+    hw_info.hw_type = ATARI_HW_UNKNOWN;
+    hw_info.mch = 0;
+    hw_info.pmmu = 0;
+    hw_info.blitter = 0;
+    hw_info.dsp = 0;
+    hw_info.vdo = 0;
+    hw_info.snd = 0;
 
-    /* CPU type */
+    /* CPU detection */
     if (Getcookie(C__CPU, &cookie_cpu) == C_FOUND) {
-        switch (cookie_cpu) {
-            case 0:
-                hw_info.cpu = ATARI_CPU_68000;
-                break;
-            case 20:
-                hw_info.cpu = ATARI_CPU_68020;
-                break;
-            case 30:
-                hw_info.cpu = ATARI_CPU_68030;
-                break;
-            case 40:
-                hw_info.cpu = ATARI_CPU_68040;
-                break;
-            case 60:
-                hw_info.cpu = ATARI_CPU_68060;
-                break;
-            default:
-                hw_info.cpu = ATARI_CPU_UNKNOWN;
-                break;
+        if (cookie_cpu >= 68060) {
+            hw_info.cpu = ATARI_CPU_68060;
+        } else if (cookie_cpu >= 68040) {
+            hw_info.cpu = ATARI_CPU_68040;
+        } else if (cookie_cpu >= 68030) {
+            hw_info.cpu = ATARI_CPU_68030;
+        } else if (cookie_cpu >= 68020) {
+            hw_info.cpu = ATARI_CPU_68020;
+        } else if (cookie_cpu >= 68010) {
+            hw_info.cpu = ATARI_CPU_68010;
+        } else {
+            hw_info.cpu = ATARI_CPU_68000;
         }
-    } else {
-        hw_info.cpu = ATARI_CPU_68000;
     }
 
     /* Machine type */
     if (Getcookie(C__MCH, &cookie_mch) == C_FOUND) {
         hw_info.mch = cookie_mch;
+        switch (cookie_mch & MCH_MASK) {
+            case MCH_ST:
+                hw_info.hw_type = ATARI_HW_ST;
+                hw_info.video = ATARI_VIDEO_ST;
+                break;
+            case MCH_STE:
+                hw_info.hw_type = ATARI_HW_STE;
+                hw_info.video = ATARI_VIDEO_STE;
+                hw_info.blitter = 1;
+                break;
+            case MCH_TT:
+                hw_info.hw_type = ATARI_HW_TT;
+                hw_info.video = ATARI_VIDEO_TT;
+                hw_info.pmmu = 1;
+                break;
+            case MCH_F30:
+                hw_info.hw_type = ATARI_HW_F30;
+                hw_info.video = ATARI_VIDEO_F30;
+                hw_info.dsp = 1;
+                hw_info.blitter = 1;
+                break;
+            default:
+                hw_info.hw_type = ATARI_HW_UNKNOWN;
+                break;
+        }
     }
 
     /* Video hardware */
     if (Getcookie(C__VDO, &cookie_vdo) == C_FOUND) {
         hw_info.vdo = cookie_vdo;
-        switch (cookie_vdo) {
+        switch (cookie_vdo >> 16) {
             case VDO_ST:
                 hw_info.video = ATARI_VIDEO_ST;
                 break;
@@ -75,12 +104,7 @@ void Atari_DetectHW(void)
             case VDO_F30:
                 hw_info.video = ATARI_VIDEO_F30;
                 break;
-            default:
-                hw_info.video = ATARI_VIDEO_UNKNOWN;
-                break;
         }
-    } else {
-        hw_info.video = ATARI_VIDEO_ST;
     }
 
     /* Sound hardware */
@@ -89,30 +113,63 @@ void Atari_DetectHW(void)
     }
 
     /* Check for PMMU */
-    hw_info.pmmu = (hw_info.cpu >= ATARI_CPU_68030);
+    hw_info.pmmu = (hw_info.cpu >= ATARI_CPU_68030) || (hw_info.hw_type == ATARI_HW_TT);
 
-    /* Check for blitter */
-    hw_info.blitter = ((cookie_mch == MCH_STE) || 
-                      (cookie_mch == MCH_TT) || 
-                      (cookie_mch == MCH_F30));
+    /* Expansion hardware detection */
+    if (Getcookie(C__MIL, &cookie_mil) == C_FOUND) {
+        hw_info.hw_type = ATARI_HW_MILAN;
+        hw_info.video = ATARI_VIDEO_MILAN;
+        hw_info.mch = MCH_MILAN;
+    } else if (Getcookie(C_hade, &cookie_hade) == C_FOUND) {
+        hw_info.hw_type = ATARI_HW_HADES;
+        hw_info.video = ATARI_VIDEO_HADES;
+        hw_info.mch = MCH_HADES;
+    } else if (Getcookie(C_NOVA, &cookie_nova) == C_FOUND) {
+        hw_info.hw_type = ATARI_HW_NOVA;
+        hw_info.video = ATARI_VIDEO_NOVA;
+    } else if (Getcookie(C_IMNE, &cookie_imne) == C_FOUND) {
+        hw_info.hw_type = ATARI_HW_IMAGINE;
+        hw_info.video = ATARI_VIDEO_IMAGINE;
+    }
+}
 
-    /* Check for SWI */
-    if (Getcookie(C__SWI, &cookie_swi) == C_FOUND) {
-        hw_info.swi = 1;
+void *Atari_SysMalloc(unsigned long size, unsigned short alloc_type)
+{
+    static int mxalloc_avail = -1;
+    
+    if (mxalloc_avail < 0) {
+        void *oldstack = (void *)Super(NULL);
+        OSHEADER *os_hdr = (OSHEADER *)*_sysbase;
+        mxalloc_avail = (os_hdr->os_version >= 0x0300);
+        Super(oldstack);
+    }
+    
+    if (mxalloc_avail) {
+        return (void *)Mxalloc(size, alloc_type);
+    } else {
+        return (void *)Malloc(size);
     }
 }
 
 const char *Atari_GetMachineName(void)
 {
-    switch (hw_info.video) {
+    switch(hw_info.video) {
         case ATARI_VIDEO_ST:
             return "ST";
         case ATARI_VIDEO_STE:
-            return "STE";
+            return (hw_info.blitter) ? "STE" : "ST";
         case ATARI_VIDEO_TT:
             return "TT";
         case ATARI_VIDEO_F30:
             return "Falcon";
+        case ATARI_VIDEO_MILAN:
+            return "Milan";
+        case ATARI_VIDEO_HADES:
+            return "Hades";
+        case ATARI_VIDEO_NOVA:
+            return "Nova Video";
+        case ATARI_VIDEO_IMAGINE:
+            return "Imagine Video";
         default:
             return "Unknown";
     }

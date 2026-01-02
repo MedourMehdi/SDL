@@ -63,6 +63,11 @@
 #include <3ds.h>
 #endif
 
+/* Atari platform headers for driver auto-detection */
+#ifdef SDL_VIDEO_DRIVER_GEM
+#include <mt_gem.h> /* For appl_init() to detect GEM */
+#endif
+
 #ifdef __LINUX__
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -497,6 +502,13 @@ int SDL_VideoInit(const char *driver_name)
     if (!driver_name) {
         driver_name = SDL_GetHint(SDL_HINT_VIDEODRIVER);
     }
+
+#ifdef __MINT__
+    if (!driver_name) {
+        driver_name = "gem";
+    }
+#endif
+
 #if defined(__LINUX__) && defined(SDL_VIDEO_DRIVER_X11)
     if (!driver_name) {
         /* See if it looks like we need X11 */
@@ -3186,6 +3198,7 @@ void SDL_OnWindowMoved(SDL_Window *window)
     if (!window->is_destroying && display_index != window->display_index && display_index != -1) {
         window->display_index = display_index;
         SDL_SendWindowEvent(window, SDL_WINDOWEVENT_DISPLAY_CHANGED, window->display_index, 0);
+        SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Window moved to display %d\n", window->display_index);
     }
 }
 

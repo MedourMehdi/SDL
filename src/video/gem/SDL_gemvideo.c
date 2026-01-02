@@ -1,131 +1,60 @@
-/* Keep only necessary includes */
+/* ============================================
+   FILE: src/video/gem/SDL_gemvideo.c
+   GEM video driver implementation
+   UPDATED: Remove duplicate appl_init
+   ============================================ */
+
+#include "../../SDL_internal.h"
 #include "SDL_gemvideo.h"
-#include "SDL_gemevents.h"
-#include <gem.h>
-#include <gemx.h>
+#include "../ataricommon/SDL_atarimodel.h"
+#include "../ataricommon/SDL_atarikeys.h"
 #include <mint/osbind.h>
-#include <mint/cookie.h>
+
+#ifdef SDL_VIDEO_DRIVER_GEM
+
+/* Atari desktop dimensions */
+int16_t wdesk, hdesk;
 
 static int GEM_ShowMessageBox(const SDL_MessageBoxData *messageboxdata, int *buttonid);
 
-/* Global variables for AES */
-extern short gl_apid;    /* Application ID */
-extern short gl_ap_version;  /* AES version */
-extern short aes_global[];   /* Global array */
-
 int GEM_SetDisplayMode(_THIS, SDL_VideoDisplay *display, SDL_DisplayMode *mode)
 {
-    struct SDL_VideoData *data = (struct SDL_VideoData *)_this->driverdata;
-
-    /* For now, just verify the mode is supported */
-    if (mode->w != data->desk_x || mode->h != data->desk_y) {
-        return SDL_SetError("Requested display mode not supported");
-    }
-
-    /* Mode is supported, nothing to do since GEM handles the screen */
+    /* GEM manages display modes */
     return 0;
 }
 
-int ATARI_InitModes(_THIS)
+static void GEM_DeleteDevice(SDL_VideoDevice *device)
 {
-    struct SDL_VideoData *data = (struct SDL_VideoData *)_this->driverdata;
-    SDL_DisplayMode mode;
-
-    /* Add the desktop mode */
-    SDL_zero(mode);
-    mode.format = SDL_PIXELFORMAT_RGB565;
-    mode.w = data->desk_x;
-    mode.h = data->desk_y;
-    mode.refresh_rate = 60;
-    mode.driverdata = NULL;
-    
-    if (SDL_AddDisplayMode(SDL_GetDisplay(0), &mode) < 0) {
-        return -1;
+    if (device) {
+        GEM_VideoQuit(device);
+        if (device->driverdata) {
+            SDL_free(device->driverdata);
+        }
+        SDL_free(device);
     }
-
-    return 0;
 }
 
-int GEM_Available(void)
-{
-    short work_in[11], work_out[57];
-    short dummy;
-    
-    /* Initialize AES */
-    printf("GEM: Trying to initialize AES...\n");
-    gl_apid = appl_init();
-    if (gl_apid == -1) {
-        printf("GEM: AES initialization failed (appl_init returned -1)\n");
-        return 0;
-    }
-    printf("GEM: AES initialized, gl_apid = %d\n", gl_apid);
-
-    /* Check VDI workstation */
-    printf("GEM: Getting VDI handle...\n");
-    dummy = graf_handle(&work_out[0], &work_out[1], 
-                       &work_out[2], &work_out[3]);
-    printf("GEM: graf_handle returned %d\n", dummy);
-    
-    for (int i = 0; i < 10; i++) {
-        work_in[i] = 1;
-    }
-    work_in[10] = 2;
-    
-    printf("GEM: Opening VDI workstation...\n");
-    v_opnvwk(work_in, &dummy, work_out);
-    
-    if (dummy == 0) {
-        printf("GEM: Failed to open VDI workstation\n");
-        appl_exit();
-        return 0;
-    }
-    printf("GEM: VDI workstation opened successfully\n");
-    
-    v_clsvwk(dummy);
-    appl_exit();
-    
-    printf("GEM: Driver available\n");
-    return 1;
-}
-
-static void GEM_DeleteDevice(SDL_VideoDevice * device)
-{
-    if (device->driverdata) {
-        SDL_free(device->driverdata);
-    }
-    SDL_free(device);
-}
-
-static SDL_VideoDevice *GEM_CreateDevice(int devindex)
+SDL_VideoDevice *GEM_CreateDevice(void)
 {
     SDL_VideoDevice *device;
-    struct SDL_VideoData *data;
+    SDL_VideoData *data;
 
-    printf("DEBUG: Creating GEM video device\n");
-
-    /* Initialize device structure */
     device = (SDL_VideoDevice *)SDL_calloc(1, sizeof(SDL_VideoDevice));
     if (!device) {
         SDL_OutOfMemory();
         return NULL;
     }
 
-    /* Initialize internal data */
-    data = (struct SDL_VideoData *)SDL_calloc(1, sizeof(struct SDL_VideoData));
+    data = (SDL_VideoData *)SDL_calloc(1, sizeof(SDL_VideoData));
     if (!data) {
         SDL_OutOfMemory();
         SDL_free(device);
         return NULL;
     }
 
-    /* Setup amount of available displays */
+    device->driverdata = data;
     device->num_displays = 0;
 
-    device->driverdata = data;
-
-    printf("DEBUG: Setting up function pointers\n");
-
-    /* Set function pointers */
     device->VideoInit = GEM_VideoInit;
     device->VideoQuit = GEM_VideoQuit;
     device->SetDisplayMode = GEM_SetDisplayMode;
@@ -136,12 +65,7 @@ static SDL_VideoDevice *GEM_CreateDevice(int devindex)
     device->DestroyWindow = GEM_DestroyWindow;
     device->free = GEM_DeleteDevice;
 
-    /* Set window management function pointers */
     device->SetWindowPosition = GEM_SetWindowPosition;
-    printf("DEBUG: SetWindowPosition set to %p\n", device->SetWindowPosition);
-
-    /* Window operations */
-
     device->ShowWindow = GEM_ShowWindow;
     device->HideWindow = GEM_HideWindow;
     device->RaiseWindow = GEM_RaiseWindow;
@@ -154,10 +78,7 @@ static SDL_VideoDevice *GEM_CreateDevice(int devindex)
     device->SetWindowMinimumSize = GEM_SetWindowMinimumSize;
     device->SetWindowMaximumSize = GEM_SetWindowMaximumSize;
 
-    /* Event handling */
     device->PumpEvents = GEM_PumpEvents;
-
-    printf("DEBUG: GEM device created successfully\n");
     
     return device;
 }
@@ -166,25 +87,32 @@ int GEM_VideoInit(_THIS)
 {
     SDL_DisplayMode mode;
     SDL_VideoDisplay display;
-    struct SDL_VideoData *data = (struct SDL_VideoData *)_this->driverdata;
+    SDL_VideoData *data = (SDL_VideoData *)_this->driverdata;
     short work_in[11], work_out[57];
     int i;
 
-    /* Initialize AES */
-    gl_apid = appl_init();
-    if (gl_apid == -1) {
-        return SDL_SetError("Can't initialize AES");
+    /* ============================================
+       CRITICAL CHANGE: Don't call appl_init here!
+       It's already done in SDL_main wrapper
+       ============================================ */
+    
+    /* Verify AES is initialized */
+    if (gl_apid < 0) {
+        return SDL_SetError("AES not initialized - gl_apid is invalid");
     }
 
-    /* Get desktop size */
-    wind_get_grect(DESK, WF_WORKXYWH, (GRECT *)&data->work_x);
-    wind_get_grect(DESK, WF_CURRXYWH, (GRECT *)&data->desk_x);
+    /* Get desktop geometry */
+    mt_wind_get_grect(DESK, WF_WORKXYWH, (GRECT *)&data->work_x, sdl_global_aes);
+    mt_wind_get_grect(DESK, WF_CURRXYWH, (GRECT *)&data->desk_x, sdl_global_aes);
 
-    /* Initialize VDI */
-    data->vdi_handle = graf_handle(&work_out[0], &work_out[1], 
-                                  &work_out[2], &work_out[3]);
+    /* Export for window position validation */
+    wdesk = data->desk_w;
+    hdesk = data->desk_h;
 
-    printf(" PLANES = %d\n", data->planes);
+    /* Open VDI workstation */
+    data->vdi_handle = mt_graf_handle(&work_out[0], &work_out[1], 
+                                  &work_out[2], &work_out[3], sdl_global_aes);
+
     for (i = 0; i < 10; i++) {
         work_in[i] = 1;
     }
@@ -192,44 +120,58 @@ int GEM_VideoInit(_THIS)
     
     v_opnvwk(work_in, &data->vdi_handle, work_out);
     if (data->vdi_handle == 0) {
-        appl_exit();
-        return SDL_SetError("Can't initialize VDI");
-    }else{
-        printf("GEM: VDI handle = %d\n", data->vdi_handle);
+        return SDL_SetError("Can't initialize VDI workstation");
     }
-	vq_extnd(data->vdi_handle,1,work_out);
-
+    
+    /* Query extended workstation info */
+    vq_extnd(data->vdi_handle, 1, work_out);
     data->planes = work_out[4];
     
-    /* Add display mode */
+    SDL_LogInfo(SDL_LOG_CATEGORY_VIDEO, 
+                "GEM: %dx%d desktop, %d planes", 
+                data->desk_w, data->desk_h, data->planes);
+    
+    /* Setup display mode based on color depth */
     SDL_zero(mode);
     switch (data->planes) {
-        case 24:  // 24bpp
-            mode.format = SDL_PIXELFORMAT_RGB888;
+        case 1:
+            mode.format = SDL_PIXELFORMAT_INDEX1MSB;  /* 2 colors */
             break;
-        case 32: // 32bpp
-            mode.format = SDL_PIXELFORMAT_ARGB8888;
+        case 2:
+            mode.format = SDL_PIXELFORMAT_INDEX4MSB;  /* 4 colors */
             break;
-        case 16: // 16bpp
+        case 4:
+            mode.format = SDL_PIXELFORMAT_INDEX4MSB;  /* 16 colors */
+            break;
+        case 8:
+            mode.format = SDL_PIXELFORMAT_INDEX8;     /* 256 colors */
+            break;
+        case 16:
+            mode.format = SDL_PIXELFORMAT_RGB565;     /* HiColor */
+            break;
+        case 24:
+            mode.format = SDL_PIXELFORMAT_RGB888;     /* TrueColor */
+            break;
+        case 32:
+            mode.format = SDL_PIXELFORMAT_ARGB8888;   /* TrueColor + Alpha */
+            break;
         default:
+            SDL_LogWarn(SDL_LOG_CATEGORY_VIDEO, 
+                       "Unknown plane count %d, defaulting to RGB565", data->planes);
             mode.format = SDL_PIXELFORMAT_RGB565;
             break;
     }
-    // mode.format = SDL_PIXELFORMAT_RGB565;
-    mode.w = data->desk_x;
-    mode.h = data->desk_y;
+    mode.w = data->desk_w;
+    mode.h = data->desk_h;
     mode.refresh_rate = 60;
-    mode.driverdata = NULL;
 
-    /* Create and add the display */
+    /* Register display */
     SDL_zero(display);
     display.desktop_mode = mode;
     display.current_mode = mode;
-    display.driverdata = NULL;
 
     if (SDL_AddVideoDisplay(&display, SDL_FALSE) < 0) {
         v_clsvwk(data->vdi_handle);
-        appl_exit();
         return -1;
     }
 
@@ -238,7 +180,11 @@ int GEM_VideoInit(_THIS)
 
 void GEM_VideoQuit(_THIS)
 {
-    struct SDL_VideoData *data = (struct SDL_VideoData *)_this->driverdata;
+    SDL_VideoData *data = (SDL_VideoData *)_this->driverdata;
+
+    if (!data) {
+        return;
+    }
 
     /* Close VDI workstation */
     if (data->vdi_handle) {
@@ -246,109 +192,39 @@ void GEM_VideoQuit(_THIS)
         data->vdi_handle = 0;
     }
 
-    /* Close AES */
-    appl_exit();
+    /* ============================================
+       CRITICAL CHANGE: Don't call appl_exit here!
+       It's done in SDL_main wrapper
+       ============================================ */
 }
 
-/* Basic message box implementation */
 static int GEM_ShowMessageBox(const SDL_MessageBoxData *messageboxdata, int *buttonid)
 {
-    /* For now, just return -1 to indicate we don't support message boxes */
-    return -1;
-}
-
-/* Add this new function for the bootstrap */
-static SDL_VideoDevice *GEM_CreateDriver(void) 
-{
-    if (!GEM_Available()) {
-        return NULL;
+    char alert_str[256];
+    char safe_msg[180];
+    short result;
+    
+    if (!messageboxdata || !messageboxdata->message) {
+        return SDL_SetError("Invalid message box data");
     }
-    return GEM_CreateDevice(0);
+    
+    SDL_strlcpy(safe_msg, messageboxdata->message, sizeof(safe_msg));
+    SDL_snprintf(alert_str, sizeof(alert_str), "[1][%s][OK]", safe_msg);
+    
+    result = mt_form_alert(1, alert_str, sdl_global_aes);
+    
+    if (buttonid) {
+        *buttonid = (result == 1) ? 0 : -1;
+    }
+    
+    return 0;
 }
 
 VideoBootStrap GEM_bootstrap = {
     "gem",
     "GEM video driver",
-    GEM_CreateDriver,    /* Now using the correct function type */
+    GEM_CreateDevice,
     GEM_ShowMessageBox
 };
 
-/* Thinking to implement custom renderer ?*/
-
-
-/* Implement the renderer functions */
-// static SDL_Renderer *GEM_CreateRenderer(SDL_Window *window, Uint32 flags)
-// {
-//     SDL_Renderer *renderer;
-//     GEM_RenderData *data;
-
-//     renderer = (SDL_Renderer *)SDL_calloc(1, sizeof(*renderer));
-//     if (!renderer) {
-//         SDL_OutOfMemory();
-//         return NULL;
-//     }
-
-//     data = (GEM_RenderData *)SDL_calloc(1, sizeof(*data));
-//     if (!data) {
-//         SDL_free(renderer);
-//         SDL_OutOfMemory();
-//         return NULL;
-//     }
-
-//     renderer->WindowEvent = GEM_WindowEvent;
-//     renderer->CreateTexture = GEM_CreateTexture;
-//     renderer->UpdateTexture = GEM_UpdateTexture;
-//     renderer->LockTexture = GEM_LockTexture;
-//     renderer->UnlockTexture = GEM_UnlockTexture;
-//     renderer->SetRenderTarget = GEM_SetRenderTarget;
-//     renderer->UpdateViewport = GEM_UpdateViewport;
-//     renderer->RenderClear = GEM_RenderClear;
-//     renderer->RenderDrawPoints = GEM_RenderDrawPoints;
-//     renderer->RenderDrawLines = GEM_RenderDrawLines;
-//     renderer->RenderFillRects = GEM_RenderFillRects;
-//     renderer->RenderCopy = GEM_RenderCopy;
-//     renderer->RenderCopyEx = GEM_RenderCopyEx;
-//     renderer->RenderReadPixels = GEM_RenderReadPixels;
-//     renderer->RenderPresent = GEM_RenderPresent;
-//     renderer->DestroyTexture = GEM_DestroyTexture;
-//     renderer->DestroyRenderer = GEM_DestroyRenderer;
-//     renderer->SetRenderDrawColor = GEM_SetRenderDrawColor;
-
-//     renderer->info.name = "gem";
-//     renderer->info.flags = SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC;
-
-//     renderer->window = window;
-//     renderer->driverdata = data;
-
-//     return renderer;
-// }
-
-// static void GEM_DestroyRenderer(SDL_Renderer *renderer)
-// {
-//     GEM_RenderData *data = (GEM_RenderData *)renderer->driverdata;
-//     SDL_free(data);
-//     SDL_free(renderer);
-// }
-
-// static int GEM_RenderClear(SDL_Renderer *renderer)
-// {
-//     GEM_RenderData *data = (GEM_RenderData *)renderer->driverdata;
-//     /* Clear the screen using VDI functions */
-//     vsf_color(data->vdi_handle, data->fill_color);
-//     v_bar(data->vdi_handle, 0, 0, renderer->window->w, renderer->window->h);
-//     return 0;
-// }
-
-// static int GEM_RenderPresent(SDL_Renderer *renderer)
-// {
-//     /* GEM updates immediately, so nothing to do here */
-//     return 0;
-// }
-
-// static int GEM_SetRenderDrawColor(SDL_Renderer *renderer, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
-// {
-//     GEM_RenderData *data = (GEM_RenderData *)renderer->driverdata;
-//     /* Convert RGB to GEM color index */
-//     data->fill_color = rgb_to_vdi_color(r, g, b);
-//     return 0;
-// }
+#endif /* SDL_VIDEO_DRIVER_GEM */

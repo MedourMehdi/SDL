@@ -443,7 +443,7 @@
 /* Enable Metal support */
 /* #undef SDL_VIDEO_METAL */
 
-#define SDL_VIDEO_DRIVER_ATARI 1
+// #define SDL_VIDEO_DRIVER_ATARI 1
 #define SDL_VIDEO_DRIVER_GEM 1
 #define SDL_AUDIO_DRIVER_ATARI 1
 #define SDL_INPUT_ATARI 1

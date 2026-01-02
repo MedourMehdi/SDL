@@ -31,6 +31,10 @@
 #include "SDL_hints.h"
 #include "../SDL_timer_c.h"
 
+#ifdef __MINT__
+#include <pthread.h>
+#endif
+
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #endif
@@ -189,6 +193,10 @@ void SDL_Delay(Uint32 ms)
     Uint64 then, now, elapsed;
 #endif
 
+#ifdef __MINT__
+    msleep(ms);
+    return;
+#endif
 #ifdef __EMSCRIPTEN__
     if (emscripten_has_asyncify() && SDL_GetHintBoolean(SDL_HINT_EMSCRIPTEN_ASYNCIFY, SDL_TRUE)) {
         /* pseudo-synchronous pause, used directly or through e.g. SDL_WaitEvent */

@@ -1,11 +1,14 @@
-#include "SDL_keyboard.h"
+/* ============================================
+   FILE: src/video/ataricommon/SDL_atarikeys.c
+   Keyboard mapping implementation
+   ============================================ */
 #include "SDL_atarikeys.h"
-#include <mint/sysbind.h>
+#include <mt_gem.h>
+#include <mint/osbind.h>
 
-/* Lookup table for Atari scancodes to SDL scancodes */
 static const SDL_Scancode atari_scancode_table[] = {
-    SDL_SCANCODE_UNKNOWN,      /* 0x00 */
-    SDL_SCANCODE_ESCAPE,       /* 0x01 */
+    SDL_SCANCODE_UNKNOWN,     /* 0x00 */
+    SDL_SCANCODE_ESCAPE,      /* 0x01 */
     SDL_SCANCODE_1,           /* 0x02 */
     SDL_SCANCODE_2,           /* 0x03 */
     SDL_SCANCODE_3,           /* 0x04 */
@@ -59,8 +62,8 @@ static const SDL_Scancode atari_scancode_table[] = {
     SDL_SCANCODE_PERIOD,      /* 0x34 */
     SDL_SCANCODE_SLASH,       /* 0x35 */
     SDL_SCANCODE_RSHIFT,      /* 0x36 */
-    SDL_SCANCODE_UNKNOWN,     /* 0x37 */
-    SDL_SCANCODE_RALT,        /* 0x38 */
+    SDL_SCANCODE_KP_MULTIPLY, /* 0x37 */
+    SDL_SCANCODE_LALT,        /* 0x38 */
     SDL_SCANCODE_SPACE,       /* 0x39 */
     SDL_SCANCODE_CAPSLOCK,    /* 0x3A */
     SDL_SCANCODE_F1,          /* 0x3B */
@@ -73,47 +76,53 @@ static const SDL_Scancode atari_scancode_table[] = {
     SDL_SCANCODE_F8,          /* 0x42 */
     SDL_SCANCODE_F9,          /* 0x43 */
     SDL_SCANCODE_F10,         /* 0x44 */
+    SDL_SCANCODE_UNKNOWN,     /* 0x45 */
+    SDL_SCANCODE_UNKNOWN,     /* 0x46 */
+    SDL_SCANCODE_HOME,        /* 0x47 */
+    SDL_SCANCODE_UP,          /* 0x48 */
+    SDL_SCANCODE_PAGEUP,      /* 0x49 */
+    SDL_SCANCODE_KP_MINUS,    /* 0x4A */
+    SDL_SCANCODE_LEFT,        /* 0x4B */
+    SDL_SCANCODE_KP_5,        /* 0x4C */
+    SDL_SCANCODE_RIGHT,       /* 0x4D */
+    SDL_SCANCODE_KP_PLUS,     /* 0x4E */
+    SDL_SCANCODE_END,         /* 0x4F */
+    SDL_SCANCODE_DOWN,        /* 0x50 */
+    SDL_SCANCODE_PAGEDOWN,    /* 0x51 */
+    SDL_SCANCODE_INSERT,      /* 0x52 */
+    SDL_SCANCODE_DELETE,      /* 0x53 */
 };
 
 SDL_Scancode ATARI_MapScancode(int scancode)
 {
-    if (scancode < 0 || scancode >= SDL_arraysize(atari_scancode_table)) {
-        return SDL_SCANCODE_UNKNOWN;
+    if (scancode >= 0 && scancode < SDL_arraysize(atari_scancode_table)) {
+        return atari_scancode_table[scancode];
     }
-    return atari_scancode_table[scancode];
+    return SDL_SCANCODE_UNKNOWN;
 }
 
 SDL_Keycode ATARI_MapKey(int scancode)
 {
-    SDL_Scancode code = ATARI_MapScancode(scancode);
-    return SDL_GetKeyFromScancode(code);
+    SDL_Scancode sdl_scancode = ATARI_MapScancode(scancode);
+    return SDL_GetKeyFromScancode(sdl_scancode);
 }
+
+// #define K_RSHIFT 0x02
+// #define K_LSHIFT 0x01
+// #define K_CTRL   0x04
+// #define K_ALT    0x08
+// #define K_CAPSLOCK 0x10
 
 Uint16 ATARI_ModState(void)
 {
-    Uint16 mod = KMOD_NONE;
-    Uint8 kbshift = Kbshift(-1);
-
-    if (kbshift & 0x01) mod |= KMOD_LSHIFT;
-    if (kbshift & 0x02) mod |= KMOD_RSHIFT;
-    if (kbshift & 0x04) mod |= KMOD_CTRL;
-    if (kbshift & 0x08) mod |= KMOD_ALT;
-    if (kbshift & 0x10) mod |= KMOD_CAPS;
-
-    return mod;
+    int kstate = Kbshift(-1);
+    Uint16 modstate = 0;
+    
+    if (kstate & K_RSHIFT) modstate |= KMOD_RSHIFT;
+    if (kstate & K_LSHIFT) modstate |= KMOD_LSHIFT;
+    if (kstate & K_CTRL)   modstate |= KMOD_CTRL;
+    if (kstate & K_ALT)    modstate |= KMOD_ALT;
+    if (kstate & K_CAPSLOCK) modstate |= KMOD_CAPS;
+    
+    return modstate;
 }
-
-// Uint16 ATARI_ModState(void)
-// {
-//     Uint16 mod = KMOD_NONE;
-//     Uint16 kstate;
-
-//     kstate = Kbshift(-1);
-
-//     if (kstate & 0x03) mod |= KMOD_SHIFT;    /* Right or Left shift */
-//     if (kstate & 0x04) mod |= KMOD_CTRL;     /* Control */
-//     if (kstate & 0x08) mod |= KMOD_ALT;      /* Alternate */
-//     if (kstate & 0x10) mod |= KMOD_CAPS;     /* Caps Lock */
-
-//     return mod;
-// }
