@@ -58,6 +58,8 @@ SDL_VideoDevice *GEM_CreateDevice(void)
     device->VideoQuit = GEM_VideoQuit;
     device->SetDisplayMode = GEM_SetDisplayMode;
     device->CreateSDLWindow = GEM_CreateWindow;
+    device->GetWindowDisplayIndex = GEM_GetWindowDisplayIndex;
+    device->SetWindowTitle = GEM_SetWindowTitle;
     device->CreateWindowFramebuffer = GEM_CreateWindowFramebuffer;
     device->UpdateWindowFramebuffer = GEM_UpdateWindowFramebuffer;
     device->DestroyWindowFramebuffer = GEM_DestroyWindowFramebuffer;

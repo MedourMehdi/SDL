@@ -39,6 +39,19 @@ static void CalculateBufferSizes(int planes, int w, int h, int *pitch, int *chun
     *chunky_size = *pitch * h;
 }
 
+void GEM_SetWindowTitle(_THIS, SDL_Window *window)
+{
+    SDL_WindowData *data = (SDL_WindowData *)window->driverdata;
+    
+    SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "GEM_SetWindowTitle called");
+    
+    if (data && data->handle >= 0) {
+        mt_wind_set_str(data->handle, WF_NAME, 
+                       window->title ? window->title : "SDL2", 
+                       sdl_global_aes);
+    }
+}
+
 int GEM_CreateWindow(_THIS, SDL_Window *window)
 {
     int w, h, x, y;
@@ -60,10 +73,9 @@ int GEM_CreateWindow(_THIS, SDL_Window *window)
     data->work_y = y;
     data->work_w = w;
     data->work_h = h;
-    printf("GEM: Requested window size %dx%d at %d,%d\n", 
+
+    SDL_LogDebug( SDL_LOG_CATEGORY_VIDEO, "GEM: Requested window size %dx%d at %d,%d\n", 
         data->work_w, data->work_h, data->work_x, data->work_y);
-    // SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "2. GEM_CreateWindow: requested size %dx%d at %d,%d",
-    //     data->work_w, data->work_h, data->work_x, data->work_y);
 
     mt_wind_calc(WC_BORDER, data->win_type, 
             data->work_x, data->work_y, data->work_w, data->work_h,
@@ -519,6 +531,12 @@ void GEM_SetWindowMinimumSize(_THIS, SDL_Window *window)
 void GEM_SetWindowMaximumSize(_THIS, SDL_Window *window)
 {
     /* Not implemented */
+}
+
+int GEM_GetWindowDisplayIndex(_THIS, SDL_Window *window)
+{
+    /* Atari ST/TT/Falcon only has one display */
+    return 0;
 }
 
 #endif /* SDL_VIDEO_DRIVER_GEM */

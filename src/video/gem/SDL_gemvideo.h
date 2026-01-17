@@ -53,6 +53,8 @@ extern void GEM_DestroyWindow(_THIS, SDL_Window *window);
 extern int GEM_CreateWindowFramebuffer(_THIS, SDL_Window *window, Uint32 *format, void **pixels, int *pitch);
 extern int GEM_UpdateWindowFramebuffer(_THIS, SDL_Window *window, const SDL_Rect *rects, int numrects);
 extern void GEM_DestroyWindowFramebuffer(_THIS, SDL_Window *window);
+extern int GEM_GetWindowDisplayIndex(_THIS, SDL_Window *window);
+extern void GEM_SetWindowTitle(_THIS, SDL_Window *window);
 
 extern void GEM_SetWindowPosition(_THIS, SDL_Window *window);
 extern void GEM_ShowWindow(_THIS, SDL_Window *window);
