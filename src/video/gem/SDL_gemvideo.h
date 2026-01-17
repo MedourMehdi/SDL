@@ -9,6 +9,7 @@
 #include "../SDL_sysvideo.h"
 #include "../../events/SDL_events_c.h"
 #include "../atari/SDL_atarivideo.h"
+
 #include <mt_gem.h>
 
 /* Video driver data */

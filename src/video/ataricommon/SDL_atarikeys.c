@@ -3,7 +3,9 @@
    Keyboard mapping implementation
    ============================================ */
 #include "SDL_atarikeys.h"
+
 #include <mt_gem.h>
+
 #include <mint/osbind.h>
 
 static const SDL_Scancode atari_scancode_table[] = {

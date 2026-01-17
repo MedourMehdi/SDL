@@ -3808,16 +3808,18 @@ case "$host" in
                 fi
                 dnl Setup input drivers
                 AC_DEFINE(SDL_INPUT_ATARI, 1, [ ])
+                # SDLMAIN_SOURCES="$srcdir/src/main/gem/*.c"
                 SOURCES="$SOURCES $srcdir/src/joystick/atari/*.c"
                 have_input=yes
                 SUMMARY_input="${SUMMARY_input} atari"   
                 dnl Setup video drivers
                 if test x$enable_video = xyes; then
-                    AC_DEFINE(SDL_VIDEO_DRIVER_ATARI, 1, [ ])
+                    # AC_DEFINE(SDL_VIDEO_DRIVER_ATARI, 1, [ ])
                     AC_DEFINE(SDL_VIDEO_DRIVER_GEM, 1, [ ])
                     SOURCES="$SOURCES $srcdir/src/video/atari/*.c"
                     SOURCES="$SOURCES $srcdir/src/video/gem/*.c"
                     SOURCES="$SOURCES $srcdir/src/video/ataricommon/*.c"
+                    SOURCES="$SOURCES $srcdir/src/video/atari/SDL_ataric2p.S"
                     have_video=yes
                     SUMMARY_video="${SUMMARY_video} atari gem"
                 fi
@@ -4078,15 +4080,9 @@ case "$host" in
         case $ARCH in
             atari)
                 # Set up files for the timer library
-                if test x$enable_atari_timers = xyes; then
-                    AC_DEFINE(SDL_TIMER_ATARI, 1, [ ])
-                    SOURCES="$SOURCES $srcdir/src/timer/atari/*.c"
-                    have_timers=yes
-                else
-                    AC_DEFINE(SDL_TIMER_UNIX, 1, [ ])
-                    SOURCES="$SOURCES $srcdir/src/timer/unix/*.c"
-                    have_timers=yes                
-                fi            
+                AC_DEFINE(SDL_TIMER_UNIX, 1, [ ])
+                SOURCES="$SOURCES $srcdir/src/timer/unix/*.c"
+                have_timers=yes
             ;;
             *)
                 AC_DEFINE(SDL_TIMER_UNIX, 1, [ ])

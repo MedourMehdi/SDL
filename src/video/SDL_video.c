@@ -65,7 +65,9 @@
 
 /* Atari platform headers for driver auto-detection */
 #ifdef SDL_VIDEO_DRIVER_GEM
+
 #include <mt_gem.h> /* For appl_init() to detect GEM */
+
 #endif
 
 #ifdef __LINUX__
@@ -2225,8 +2227,8 @@ void *SDL_GetWindowData(SDL_Window *window, const char *name)
 
 void SDL_SetWindowPosition(SDL_Window *window, int x, int y)
 {
+    SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "SDL_SetWindowPosition called");
     CHECK_WINDOW_MAGIC(window, );
-    printf("ATARI DEBUG: In SDL_SetWindowPosition\n");
     if (SDL_WINDOWPOS_ISCENTERED(x) || SDL_WINDOWPOS_ISCENTERED(y)) {
         int displayIndex = (x & 0xFFFF);
         SDL_Rect bounds;

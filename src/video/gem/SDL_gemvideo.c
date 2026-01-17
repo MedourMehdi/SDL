@@ -1,7 +1,6 @@
 /* ============================================
    FILE: src/video/gem/SDL_gemvideo.c
    GEM video driver implementation
-   UPDATED: Remove duplicate appl_init
    ============================================ */
 
 #include "../../SDL_internal.h"
@@ -102,14 +101,18 @@ int GEM_VideoInit(_THIS)
     }
 
     /* Get desktop geometry */
+
     mt_wind_get_grect(DESK, WF_WORKXYWH, (GRECT *)&data->work_x, sdl_global_aes);
     mt_wind_get_grect(DESK, WF_CURRXYWH, (GRECT *)&data->desk_x, sdl_global_aes);
 
+    data->desk_w = data->desk_w;
+    data->desk_h = data->desk_h;
     /* Export for window position validation */
     wdesk = data->desk_w;
     hdesk = data->desk_h;
 
     /* Open VDI workstation */
+
     data->vdi_handle = mt_graf_handle(&work_out[0], &work_out[1], 
                                   &work_out[2], &work_out[3], sdl_global_aes);
 
@@ -212,7 +215,7 @@ static int GEM_ShowMessageBox(const SDL_MessageBoxData *messageboxdata, int *but
     SDL_snprintf(alert_str, sizeof(alert_str), "[1][%s][OK]", safe_msg);
     
     result = mt_form_alert(1, alert_str, sdl_global_aes);
-    
+
     if (buttonid) {
         *buttonid = (result == 1) ? 0 : -1;
     }

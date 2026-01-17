@@ -71,7 +71,8 @@ int GEM_CreateWindow(_THIS, SDL_Window *window)
 
     data->handle = mt_wind_create(data->win_type, 
                                data->win_x, data->win_y, data->win_w, data->win_h, sdl_global_aes);
-    
+
+
     if (data->handle < 0) {
         SDL_free(data);
         return SDL_SetError("Can't create GEM window");
@@ -79,9 +80,11 @@ int GEM_CreateWindow(_THIS, SDL_Window *window)
 
     mt_wind_set_str(data->handle, WF_NAME, window->title ? window->title : "SDL2", sdl_global_aes);
     mt_wind_open(data->handle, data->win_x, data->win_y, data->win_w, data->win_h, sdl_global_aes);
+
     printf("GEM: Created window '%s' (handle %d) at %d,%d %dx%d\n", 
         window->title ? window->title : "SDL2 WINDOW",
         data->handle, data->win_x, data->win_y, data->win_w, data->win_h);
+
     /* Initialize tracking */
     data->last_w = data->work_w;
     data->last_h = data->work_h;
@@ -98,8 +101,10 @@ void GEM_DestroyWindow(_THIS, SDL_Window *window)
     SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "GEM_DestroyWindow called");
     if (data) {
         if (data->handle >= 0) {
+
             mt_wind_close(data->handle, sdl_global_aes);
             mt_wind_delete(data->handle, sdl_global_aes);
+
         }
         if (data->buffer) {
             SDL_free(data->buffer);
@@ -210,14 +215,15 @@ int GEM_UpdateWindowFramebuffer(_THIS, SDL_Window *window,
     // }
 
     vh = video->vdi_handle;
+
     mt_wind_get_grect(data->handle, WF_WORKXYWH, &work, sdl_global_aes);
     
     mt_graf_mouse(M_OFF, 0L, sdl_global_aes);
-    mt_wind_update(BEG_UPDATE, sdl_global_aes);
+    // mt_wind_update(BEG_UPDATE, sdl_global_aes);
     
     /* Walk GEM rectangles */
     mt_wind_get(data->handle, WF_FIRSTXYWH, &todo[0], &todo[1], &todo[2], &todo[3], sdl_global_aes);
-    
+
     while (todo[2] && todo[3]) {
         GRECT gem_rect = { todo[0], todo[1], todo[2], todo[3] };
         
@@ -239,18 +245,35 @@ int GEM_UpdateWindowFramebuffer(_THIS, SDL_Window *window,
                 blit_rect = gem_rect;
                 if (rc_intersect(&sdl_grect, &blit_rect)) {
                     short pxy[8];
+                    void *src_ptr;
+                    void *dst_ptr;
                     /* Convert the intersection area to planar format */
                     int src_x = blit_rect.g_x - work.g_x;
                     int src_y = blit_rect.g_y - work.g_y;
-                    
+
+                    /* Handle pointer math for < 8 planes (ST/STE modes).
+                       For 1,2,4,8 planes, SDL uses INDEX8 (1 byte/pixel).
+                       shift >> 3 is 0 for these modes, breaking the offset. */
+                    int src_bpp = (video->planes < 8) ? 1 : (video->planes >> 3);
+                    /* Destination offset is trickier for Planar (1,2,4 planes) */
+                    /* For 4 planes: 16 pixels = 8 bytes. So approx 0.5 bytes/pixel */
+                    /* We will use a safe byte offset approximation */
+                    int dst_offset;
+                    if (video->planes < 8) {
+                        /* Planar byte offset: (pixels / 16) * stride_of_16_pixels */
+                        int chunk_size = video->planes * 2; /* bytes per 16 pixels */
+                        dst_offset = (src_x / 16) * chunk_size;
+                    } else {
+                        dst_offset = src_x * (video->planes >> 3);
+                    }
                     /* Calculate source and destination pointers for partial conversion */
-                    void *src_ptr = (char*)data->buffer + 
+                    src_ptr = (char*)data->buffer + 
                                    (src_y * data->buffer_pitch) + 
-                                   (src_x * (video->planes >> 3));
+                                   (src_x * src_bpp);
                     
-                    void *dst_ptr = (char*)data->planar_buffer + 
+                    dst_ptr = (char*)data->planar_buffer + 
                                    (src_y * data->planar_mfdb.fd_wdwidth * 2 * video->planes) +
-                                   (src_x * (video->planes >> 3));
+                                   dst_offset;
                     
                     /* Convert only the required rectangle */
                     switch (video->planes) {
@@ -268,6 +291,7 @@ int GEM_UpdateWindowFramebuffer(_THIS, SDL_Window *window,
                             break;
                         case 16: case 24: case 32: {
                             int row_bytes = blit_rect.g_w * (video->planes >> 3);
+                            SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Blitting %d bytes", row_bytes);
                             Atari_BlitFast(dst_ptr, src_ptr,
                                          row_bytes, blit_rect.g_h, 
                                          data->buffer_pitch);
@@ -291,11 +315,12 @@ int GEM_UpdateWindowFramebuffer(_THIS, SDL_Window *window,
                 }
             }
         }
-        
+
         mt_wind_get(data->handle, WF_NEXTXYWH, &todo[0], &todo[1], &todo[2], &todo[3], sdl_global_aes);
+
     }
-     
-    mt_wind_update(END_UPDATE, sdl_global_aes);
+    
+    // mt_wind_update(END_UPDATE, sdl_global_aes);
     mt_graf_mouse(M_ON, 0L, sdl_global_aes);
     
     data->in_gem_redraw = SDL_FALSE;
@@ -341,10 +366,6 @@ void GEM_SetWindowPosition(_THIS, SDL_Window *window)
     new_pos.g_y = SDL_clamp(window->y, viddata->work_y, viddata->work_y + viddata->work_h - windata->work_h);
     new_pos.g_w = windata->work_w;
     new_pos.g_h = windata->work_h;
-    
-    /* Perform the move */
-    mt_wind_set(windata->handle, WF_CURRXYWH, 
-             new_pos.g_x, new_pos.g_y, new_pos.g_w, new_pos.g_h, sdl_global_aes);
 
     /* Update SDL_WindowData's internal state */
     windata->work_x = new_pos.g_x;
@@ -353,9 +374,16 @@ void GEM_SetWindowPosition(_THIS, SDL_Window *window)
     windata->work_h = new_pos.g_h;
     SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "GEM_SetWindowPosition: work area set to %d,%d %dx%d",
         windata->work_x, windata->work_y, windata->work_w, windata->work_h);
+
     mt_wind_calc(WC_BORDER, windata->win_type, 
             windata->work_x, windata->work_y, windata->work_w, windata->work_h,
             &windata->win_x, &windata->win_y, &windata->win_w, &windata->win_h, sdl_global_aes);
+
+    /* Perform the move */
+
+    mt_wind_set(windata->handle, WF_CURRXYWH, 
+            windata->win_x, windata->win_y, windata->win_w, windata->win_h, sdl_global_aes);
+   
 }
 
 void GEM_ShowWindow(_THIS, SDL_Window *window)
@@ -364,8 +392,10 @@ void GEM_ShowWindow(_THIS, SDL_Window *window)
     GRECT curr;
     SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "GEM_ShowWindow called");
     if (data && data->handle >= 0) {
+
         mt_wind_get_grect(data->handle, WF_CURRXYWH, &curr, sdl_global_aes);
         mt_wind_open(data->handle, curr.g_x, curr.g_y, curr.g_w, curr.g_h, sdl_global_aes);
+
     }
 }
 
@@ -374,7 +404,9 @@ void GEM_HideWindow(_THIS, SDL_Window *window)
     SDL_WindowData *data = (SDL_WindowData *)window->driverdata;
     SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "GEM_HideWindow called");
     if (data && data->handle >= 0) {
+
         mt_wind_close(data->handle, sdl_global_aes);
+
     }
 }
 
@@ -383,7 +415,9 @@ void GEM_RaiseWindow(_THIS, SDL_Window *window)
     SDL_WindowData *data = (SDL_WindowData *)window->driverdata;
     SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "GEM_RaiseWindow called");
     if (data && data->handle >= 0) {
+
         mt_wind_set(data->handle, WF_TOP, 0, 0, 0, 0, sdl_global_aes);
+
     }
 }
 
@@ -435,10 +469,11 @@ void GEM_RestoreWindow(_THIS, SDL_Window *window)
     SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "GEM_RestoreWindow called");
     if (data && data->handle >= 0) {
         /* Restore from saved position */
+
         mt_wind_set(data->handle, WF_CURRXYWH,
                  data->restore_rect.g_x, data->restore_rect.g_y,
                  data->restore_rect.g_w, data->restore_rect.g_h, sdl_global_aes);
-        
+
         data->is_maximized = SDL_FALSE;
         
         /* Update SDL's internal state */
@@ -470,8 +505,10 @@ void GEM_SetWindowSize(_THIS, SDL_Window *window)
     if (!data || data->handle < 0) return;
     
     SDL_GetWindowSize(window, &w, &h);
+
     mt_wind_get_grect(data->handle, WF_CURRXYWH, &curr, sdl_global_aes);
     mt_wind_set(data->handle, WF_CURRXYWH, curr.g_x, curr.g_y, w, h, sdl_global_aes);
+
 }
 
 void GEM_SetWindowMinimumSize(_THIS, SDL_Window *window)

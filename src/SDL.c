@@ -61,6 +61,9 @@ extern int SDL_HelperWindowDestroy(void);
 #endif
 
 #ifdef __MINT__
+
+#include <mt_gem.h> /* For appl_init() to detect GEM */
+
 /* Global AES application ID required by GEM/XaAES */
 short gl_apid = -1;
 short sdl_global_aes[16] = {0};
@@ -226,8 +229,13 @@ int SDL_InitSubSystem(Uint32 flags)
 
 #if defined(__MINT__)
     /* Initialize threading before SDL */
-    pthread_setup_threading_np();
-    gl_apid = mt_appl_init(sdl_global_aes);
+    // pthread_setup_threading_np();
+
+    if (gl_apid < 0) {
+        gl_apid = mt_appl_init(sdl_global_aes);
+        SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "ATARI_GEM_Init: mt_appl_init() returned APID %d", gl_apid);
+    }
+
     if (gl_apid < 0) {
         /* Fatal error - cannot continue without AES */
         SDL_LogDebug(SDL_LOG_CATEGORY_ERROR, "ATARI_GEM_Init: mt_appl_init() failed!");
@@ -416,15 +424,6 @@ void SDL_QuitSubSystem(Uint32 flags)
     SDL_OS2Quit();
 #endif
 
-#if defined(__MINT__)
-    /* Cleanup AES - unregister from XaAES/GEM */
-    if (gl_apid >= 0) {
-        SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "ATARI_GEM_Quit: calling mt_appl_exit() for APID %d", gl_apid);
-        mt_appl_exit(sdl_global_aes);
-        gl_apid = -1;
-    }
-#endif
-
     /* Shut down requested initialized subsystems */
 #ifndef SDL_SENSOR_DISABLED
     if (flags & SDL_INIT_SENSOR) {
@@ -501,6 +500,16 @@ void SDL_QuitSubSystem(Uint32 flags)
             SDL_EventsQuit();
         }
         SDL_PrivateSubsystemRefCountDecr(SDL_INIT_EVENTS);
+        #if defined(__MINT__)
+            /* Cleanup AES - unregister from XaAES/GEM */
+            if (gl_apid >= 0) {
+                SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "ATARI_GEM_Quit: calling mt_appl_exit() for APID %d", gl_apid);
+
+                mt_appl_exit(sdl_global_aes);
+
+                gl_apid = -1;
+            }
+        #endif /* __MINT__ */
     }
 #endif
 }
