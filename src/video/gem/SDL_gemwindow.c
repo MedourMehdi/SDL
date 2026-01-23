@@ -63,7 +63,7 @@ int GEM_CreateWindow(_THIS, SDL_Window *window)
     SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "1. GEM_CreateWindow called");
 
     data->win_type = NAME | CLOSER | MOVER;
-    if (!(window->flags & SDL_WINDOW_BORDERLESS)) {
+    if (window->flags & SDL_WINDOW_RESIZABLE) {
         data->win_type |= SIZER | FULLER;
     }
 
@@ -76,6 +76,7 @@ int GEM_CreateWindow(_THIS, SDL_Window *window)
 
     SDL_LogDebug( SDL_LOG_CATEGORY_VIDEO, "GEM: Requested window size %dx%d at %d,%d\n", 
         data->work_w, data->work_h, data->work_x, data->work_y);
+    // printf("GEM: Requested window size %dx%d at %d,%d\n", data->work_w, data->work_h, data->work_x, data->work_y);
 
     mt_wind_calc(WC_BORDER, data->win_type, 
             data->work_x, data->work_y, data->work_w, data->work_h,
@@ -93,9 +94,12 @@ int GEM_CreateWindow(_THIS, SDL_Window *window)
     mt_wind_set_str(data->handle, WF_NAME, window->title ? window->title : "SDL2", sdl_global_aes);
     mt_wind_open(data->handle, data->win_x, data->win_y, data->win_w, data->win_h, sdl_global_aes);
 
-    printf("GEM: Created window '%s' (handle %d) at %d,%d %dx%d\n", 
+    SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "GEM: Created window '%s' (handle %d) at %d,%d %dx%d\n",
         window->title ? window->title : "SDL2 WINDOW",
         data->handle, data->win_x, data->win_y, data->win_w, data->win_h);
+    // printf("GEM: Created window '%s' (handle %d) at %d,%d %dx%d\n", 
+    //     window->title ? window->title : "SDL2 WINDOW",
+    //     data->handle, data->win_x, data->win_y, data->win_w, data->win_h);
 
     /* Initialize tracking */
     data->last_w = data->work_w;
@@ -201,7 +205,10 @@ int GEM_CreateWindowFramebuffer(_THIS, SDL_Window *window,
     
     /* Initialize size tracking */
     data->last_w = w;
-    data->last_h = h;    
+    data->last_h = h;
+    data->work_w = w;
+    data->work_h = h;
+    
     return 0;
 }
 
@@ -231,7 +238,7 @@ int GEM_UpdateWindowFramebuffer(_THIS, SDL_Window *window,
     mt_wind_get_grect(data->handle, WF_WORKXYWH, &work, sdl_global_aes);
     
     mt_graf_mouse(M_OFF, 0L, sdl_global_aes);
-    // mt_wind_update(BEG_UPDATE, sdl_global_aes);
+    mt_wind_update(BEG_UPDATE, sdl_global_aes);
     
     /* Walk GEM rectangles */
     mt_wind_get(data->handle, WF_FIRSTXYWH, &todo[0], &todo[1], &todo[2], &todo[3], sdl_global_aes);
@@ -332,7 +339,7 @@ int GEM_UpdateWindowFramebuffer(_THIS, SDL_Window *window,
 
     }
     
-    // mt_wind_update(END_UPDATE, sdl_global_aes);
+    mt_wind_update(END_UPDATE, sdl_global_aes);
     mt_graf_mouse(M_ON, 0L, sdl_global_aes);
     
     data->in_gem_redraw = SDL_FALSE;
@@ -511,16 +518,30 @@ void GEM_SetWindowResizable(_THIS, SDL_Window *window, SDL_bool resizable)
 void GEM_SetWindowSize(_THIS, SDL_Window *window)
 {
     SDL_WindowData *data = (SDL_WindowData *)window->driverdata;
-    GRECT curr;
-    int w, h;
+
+    int x, y, w, h;
+
     SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "GEM_SetWindowSize called");
     if (!data || data->handle < 0) return;
     
+    SDL_GetWindowPosition(window, &x, &y);
     SDL_GetWindowSize(window, &w, &h);
 
-    mt_wind_get_grect(data->handle, WF_CURRXYWH, &curr, sdl_global_aes);
-    mt_wind_set(data->handle, WF_CURRXYWH, curr.g_x, curr.g_y, w, h, sdl_global_aes);
+    data->work_x = x;
+    data->work_y = y;
+    data->work_w = w;
+    data->work_h = h;
 
+    /* Convert internal (SDL work area) to external (GEM message) */
+    mt_wind_calc(WC_BORDER, data->win_type,
+                data->work_x, data->work_y, data->work_w, data->work_h,
+                &data->win_x, &data->win_y, &data->win_w, &data->win_h, sdl_global_aes);
+
+    data->last_w = data->work_w;
+    data->last_h = data->work_h;
+
+    mt_wind_set(data->handle, WF_CURRXYWH, data->win_x, data->win_y, data->win_w, data->win_h, sdl_global_aes);
+    // SDL_SendWindowEvent(window, SDL_WINDOWEVENT_SIZE_CHANGED, data->work_w, data->work_h);
 }
 
 void GEM_SetWindowMinimumSize(_THIS, SDL_Window *window)

@@ -16,11 +16,10 @@ static short mb = 0;
 static short mc = 0;
 static short kstate, key_state;
 static short msg[8];
-static short gem_events;
 static SDL_Window *window;
 static SDL_WindowData *win_data;
 
-/* Keyboard state tracking - ISO C90 compliant */
+/* Keyboard state tracking */
 static unsigned char key_state_map[128] = {0};
 static unsigned char key_frame_count[128] = {0};  /* Frames since last GEM report */
 static unsigned char any_keybd_this_frame = 0;
@@ -45,6 +44,7 @@ void GEM_QuitEvents(_THIS)
 /* Helper: Check if scan code is a modifier */
 static int IsModifierKey(int scan)
 {
+    SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "IsModifierKey called with scan %d", scan);
     return (scan == 0x2A || scan == 0x36 ||  /* LSHIFT, RSHIFT */
             scan == 0x1D ||                   /* LCTRL */
             scan == 0x38);                    /* LALT */
@@ -53,6 +53,7 @@ static int IsModifierKey(int scan)
 void GEM_PumpEvents(_THIS)
 {
     int scan;
+    short gem_events = 0;
     Uint8 atari_scan;
     SDL_Scancode scancode;
     char ascii_char[2];
@@ -65,23 +66,23 @@ void GEM_PumpEvents(_THIS)
     /* Reset frame tracking */
     any_keybd_this_frame = 0;
     
-    /* Poll GEM events - EXACTLY your working pattern */
+    /* Poll GEM events */
     gem_events = mt_evnt_multi(MU_MESAG | MU_KEYBD | MU_BUTTON | MU_TIMER,
                0x101, 3, (~mb) & 3,
                0, 0, 0, 0, 0,
                0, 0, 0, 0, 0,
-               msg, 0L,
+               msg, 1L,
                &mx, &my, &mb, &kstate, &key_state, &mc, sdl_global_aes);
-
     if (!gem_events) {
         return;
     }
-
     /* ==== Handle keyboard input ==== */
-    if (gem_events & MU_KEYBD) {
+    else if (gem_events & MU_KEYBD) {
+
         atari_scan = (Uint8)((key_state >> 8) & 0xFF);
         scancode = ATARI_MapScancode((int)atari_scan);
-        
+        SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "GEM scan code %d, SDL scan code %d", atari_scan, scancode);
+
         if (scancode != SDL_SCANCODE_UNKNOWN) {
             /* Mark that we got keyboard activity */
             any_keybd_this_frame = 1;
@@ -95,12 +96,15 @@ void GEM_PumpEvents(_THIS)
                 
                 /* Only send non-modifiers here - modifiers handled by Kbshift() */
                 if (!IsModifierKey(atari_scan)) {
+                    /* Send key down event */
+                    SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Sending key down: %d", scancode);
                     SDL_SendKeyboardKey(SDL_PRESSED, scancode);
                     
                     /* Handle text input */
                     ascii_char[0] = (char)(key_state & 0xFF);
                     ascii_char[1] = '\0';
                     if (ascii_char[0] >= 32 && ascii_char[0] <= 126) {
+                        SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Sending text: '%s'", ascii_char);
                         SDL_SendKeyboardText(ascii_char);
                     }
                 }
@@ -108,30 +112,18 @@ void GEM_PumpEvents(_THIS)
         }
     }
     
-    /* ==== Handle key releases - THE CRITICAL FIX ==== */
-    /* Only release keys if NO keyboard events this frame */
-    if (!any_keybd_this_frame) {
-        for (scan = 0x02; scan <= 0x53; scan++) {
-            if (key_state_map[scan]) {
-                key_frame_count[scan]++;
-                
-                /* Release after ~30-40ms of no GEM reports (3-4 frames) */
-                /* This catches releases without being too slow */
-                if (key_frame_count[scan] > 3) {
-                    scancode = ATARI_MapScancode(scan);
-                    SDL_SendKeyboardKey(SDL_RELEASED, scancode);
-                    key_state_map[scan] = 0;
-                    key_frame_count[scan] = 0;
-                }
-            }
-        }
-    } else {
-        /* GEM reported something - don't increment counters */
-        /* Keys not in the MU_KEYBD event will be released next frame */
-        for (scan = 0x02; scan <= 0x53; scan++) {
-            if (key_state_map[scan] && key_frame_count[scan] > 0) {
-                /* This key was missing from the MU_KEYBD event = released */
+    /* Unified release logic: Age all pressed keys every frame */
+    /* Notes: 
+       1. If key was just pressed above, count was reset to 0. It becomes 1 here (safe).
+       2. Threshold increased to 8 frames (~130ms) to bridge the gap in Atari auto-repeats.
+    */
+    for (scan = 0x02; scan <= 0x53; scan++) {
+        if (key_state_map[scan]) {
+            key_frame_count[scan]++;
+            
+            if (key_frame_count[scan] > 14) {
                 scancode = ATARI_MapScancode(scan);
+                SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "Sending key release: %d", scancode);
                 SDL_SendKeyboardKey(SDL_RELEASED, scancode);
                 key_state_map[scan] = 0;
                 key_frame_count[scan] = 0;
@@ -164,7 +156,6 @@ void GEM_PumpEvents(_THIS)
     last_mod_state = current_mod_state;
 
     /* ==== Handle GEM messages ==== */
-    /* ... rest of your working code unchanged ... */
     if (gem_events & MU_MESAG) {
         for (window = _this->windows; window != NULL; window = window->next) {
             win_data = (SDL_WindowData *)window->driverdata;
@@ -176,7 +167,7 @@ void GEM_PumpEvents(_THIS)
             SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "GEM event for invalid window ID %d", msg[3]);
             return;
         }
-        /* ... switch(msg[0]) unchanged ... */
+
         switch (msg[0]) {
             case WM_FULLED:
                 if (win_data && msg[3] == win_data->handle){
@@ -206,7 +197,7 @@ void GEM_PumpEvents(_THIS)
             case WM_SIZED:
                 if (win_data && msg[3] == win_data->handle){
                     SDL_SetWindowSize(window, msg[6], msg[7]);
-                    SDL_SendWindowEvent(window, SDL_WINDOWEVENT_SIZE_CHANGED, msg[6], msg[7]);
+                    // SDL_SendWindowEvent(window, SDL_WINDOWEVENT_SIZE_CHANGED, msg[6], msg[7]);
                 }
                 break;
             case WM_TOPPED:
@@ -260,8 +251,7 @@ void GEM_PumpEvents(_THIS)
     }
 
     /* ==== Handle mouse events ==== */
-    if (gem_events & MU_BUTTON)
-    {
+    else if (gem_events & MU_BUTTON) {
         /* Find window by mouse coordinates, not msg[3] (which is garbage for MU_BUTTON) */
         for (window = _this->windows; window != NULL; window = window->next) {
             if (mx >= window->x && mx < window->x + window->w &&
@@ -279,18 +269,6 @@ void GEM_PumpEvents(_THIS)
             SDL_SendMouseMotion(window, 0, 0, x, y);
         }
         
-        // switch (mb)
-        // {
-        //     case 0:
-        //         break;
-        //     case 1:
-        //         SDL_SendMouseButton(window, 0, SDL_PRESSED, SDL_BUTTON_LEFT);
-        //         break;
-        //     case 2:
-        //         SDL_SendMouseButton(window, 0, SDL_PRESSED, SDL_BUTTON_RIGHT);
-        //         break;
-        // }
-
         if (mb != last_mb) {
             for (i = 0; i < 2; i++) {
                 curbutton = mb & (1 << i);

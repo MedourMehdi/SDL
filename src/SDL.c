@@ -500,16 +500,6 @@ void SDL_QuitSubSystem(Uint32 flags)
             SDL_EventsQuit();
         }
         SDL_PrivateSubsystemRefCountDecr(SDL_INIT_EVENTS);
-        #if defined(__MINT__)
-            /* Cleanup AES - unregister from XaAES/GEM */
-            if (gl_apid >= 0) {
-                SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "ATARI_GEM_Quit: calling mt_appl_exit() for APID %d", gl_apid);
-
-                mt_appl_exit(sdl_global_aes);
-
-                gl_apid = -1;
-            }
-        #endif /* __MINT__ */
     }
 #endif
 }
@@ -567,7 +557,16 @@ void SDL_Quit(void)
     SDL_memset(SDL_SubsystemRefCount, 0x0, sizeof(SDL_SubsystemRefCount));
 
     SDL_QuitMainThread();
+        #if defined(__MINT__)
+            /* Cleanup AES - unregister from XaAES/GEM */
+            if (gl_apid >= 0) {
+                SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "ATARI_GEM_Quit: calling mt_appl_exit() for APID %d", gl_apid);
 
+                mt_appl_exit(sdl_global_aes);
+
+                gl_apid = -1;
+            }
+        #endif /* __MINT__ */
     SDL_bInMainQuit = SDL_FALSE;
 }
 

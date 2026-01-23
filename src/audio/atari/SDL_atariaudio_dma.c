@@ -1,11 +1,7 @@
 /* 
- * SDL_atariaudio.c - Circular Buffer Mode (Pointer Stepping Optimization)
+ * SDL_atariaudio.c - Drop-Free Hybrid Polling
  * 
- * Fixes:
- * 1. Replaced XBIOS Buffptr() with direct hardware register read (Performance).
- * 2. Fixed ASM swap function to prevent data loss.
- * 3. Safe Startup and Wraparound logic.
- * 4. OPTIMIZATION: Removed index multiplication in hot path, using pointer stepping.
+ * CRITICAL FIX: DMA distance check prevents underrun
  */
 
 #include "../../SDL_internal.h"
@@ -18,54 +14,35 @@
 #include <mint/cookie.h>
 #include <mint/falcon.h>
 #include <mint/mintbind.h>
-#include <unistd.h>
 #include <pthread.h>
 
-/* --- Definitions & Structs --- */
+/* --- Definitions --- */
 #define SND_16BIT   0x04
 #define SND_8BIT    0x02
-
 #define _THIS SDL_AudioDevice *this
+#define NUM_CHUNKS 10  /* Safe distance requires multiple chunks */
 
-#define NUM_CHUNKS 3  /* 3 logical buffers in the circular buffer */
-
-typedef struct {
-    int freq;
-    int prescale;
-} FalconFreq;
-
+typedef struct { int freq; int prescale; } FalconFreq;
 static const FalconFreq falcon_freq_table[] = {
     { 49170, 1 }, { 33880, 2 }, { 24585, 3 }, { 20770, 4 },
     { 16490, 5 }, { 12292, 6 }, { 9849, 7 },  { 8195, 8 }, { 0, 0 }
 };
 
 struct SDL_PrivateAudioData {
-    Uint8 *buffer_base;      /* Start of circular buffer */
-    Uint8 *buffer_end;       /* End of circular buffer */
-    int    chunk_size;       /* Size of one logical buffer (mixlen) */
-    int    total_size;       /* Total buffer size (chunk_size * NUM_CHUNKS) */
-    Uint8 *current_fill_ptr; /* Pointer to the chunk we are currently filling */
-    int    playing;
-    int    swap_needed;      /* 1 if we need LSB->MSB swap */
-    int    xor_needed;       /* 1 if we need U8->S8 conversion */    
+    Uint8 *current_fill_ptr, *buffer_base, *buffer_end;
+    int chunk_size, playing, swap_needed, xor_needed, total_size;
 };
 
+/* --- Audio Conversions --- */
 static void convert_u8_s8(Uint8 *ptr, int count)
 {
     Uint32 *p32 = (Uint32 *)ptr;
     int c32 = count >> 2;
     int rem = count & 3;
-    
-    /* Process 4 bytes at a time */
-    while (c32--) {
-        *p32++ ^= 0x80808080;
-    }
-    
-    /* Handle remainder */
+
+    while (c32--) *p32++ ^= 0x80808080;
     ptr = (Uint8*)p32;
-    while (rem--) {
-        *ptr++ ^= 0x80;
-    }
+    while (rem--) *ptr++ ^= 0x80;
 }
 
 /* --- Optimized Byte Swap (Corrected) --- */
@@ -105,18 +82,17 @@ static inline void swap_audio_bytes_asm(Uint8 *ptr, int count)
     );
 }
 
-/* --- Hardware Helper Functions --- */
+/* --- DMA Hardware Registers --- */
+#define DMA_PTR_HIGH  ((volatile Uint8 *)0xFFFF8909)
+#define DMA_PTR_MID   ((volatile Uint8 *)0xFFFF890B)
+#define DMA_PTR_LOW   ((volatile Uint8 *)0xFFFF890D)
 
+/* --- Hardware Setup --- */
 static void mint_audio_open_hw(SDL_AudioDevice *device, SDL_AudioSpec *spec)
 {
     struct SDL_PrivateAudioData *hidden = device->hidden;
-    int i, best_idx = 0, min_diff = 1000000, diff;
-    int mode;
-    // Uint32 frames;
-    // Uint32 bytes_per_sample;
-    // Uint32 bytes_per_frame; 
+    int i, best_idx = 0, min_diff = 1000000, diff, mode;
 
-    /* Find closest frequency */
     for (i = 0; falcon_freq_table[i].freq != 0; i++) {
         diff = spec->freq - falcon_freq_table[i].freq;
         diff = (diff < 0) ? -diff : diff;
@@ -125,62 +101,37 @@ static void mint_audio_open_hw(SDL_AudioDevice *device, SDL_AudioSpec *spec)
             best_idx = i;
         }
     }
-    spec->freq = falcon_freq_table[best_idx].freq;
 
-    /* Format negotiation & Hardware Flags */
-    hidden->swap_needed = 0;
-    hidden->xor_needed = 0;
-
-    /* Format negotiation */
+    hidden->swap_needed = hidden->xor_needed = 0;
     if (SDL_AUDIO_BITSIZE(spec->format) == 16) {
-        if (spec->format == AUDIO_S16LSB) {
-            hidden->swap_needed = 1; /* Hardware needs MSB */
-        } else {
-            spec->format = AUDIO_S16MSB;
-        }
-        
-        /* Use headers: MODE_STEREO16 (1) or MODE_MONO16 (3) */
-        if (spec->channels > 1) {
-            mode = MODE_STEREO16;
-            spec->channels = 2;
-        } else {
-            mode = MODE_MONO16;
-            spec->channels = 1;
-        }
+        if (spec->format == AUDIO_S16LSB) hidden->swap_needed = 1;
+        else spec->format = AUDIO_S16MSB;
+        mode = (spec->channels > 1) ? MODE_STEREO16 : MODE_MONO16;
+        spec->channels = (spec->channels > 1) ? 2 : 1;
     } else {
-        /* 8-bit handling */
-        if (spec->format == AUDIO_U8) {
-            hidden->xor_needed = 1; /* User wants U8, we convert to S8 */
-        } else {
-            spec->format = AUDIO_S8; /* Native S8 */
-        }
+        if (spec->format == AUDIO_U8) hidden->xor_needed = 1;
+        else spec->format = AUDIO_S8;
         mode = (spec->channels > 1) ? MODE_STEREO8 : MODE_MONO;
     }
 
     SDL_CalculateAudioSpec(spec);
     hidden->chunk_size = spec->size;
     hidden->total_size = hidden->chunk_size * NUM_CHUNKS;
-
-    /* Allocate ONE large circular buffer in ST-RAM */
     hidden->buffer_base = (Uint8 *)Mxalloc(hidden->total_size, MX_STRAM);
     
     if (!hidden->buffer_base) {
-        SDL_SetError("Out of ST-RAM for audio buffer");
+        SDL_SetError("Out of ST-RAM");
         return;
     }
 
     hidden->buffer_end = hidden->buffer_base + hidden->total_size;
     SDL_memset(hidden->buffer_base, device->spec.silence, hidden->total_size);
-
-    /* Initialize fill pointer to start */
     hidden->current_fill_ptr = hidden->buffer_base;
     hidden->playing = 0;
 
-    /* Hardware Init */
     Locksnd();
     Sndstatus(SND_RESET);
     Buffoper(0);
-    
     Devconnect(DMAPLAY, DAC, CLK25M, falcon_freq_table[best_idx].prescale, NO_SHAKE);
     Setmode(mode);
     Settracks(0, 0);
@@ -194,29 +145,19 @@ static void mint_audio_start_hw(SDL_AudioDevice *device)
     Uint8 *chunk_ptr;
     
     if (!hidden->playing) {
-        /* Pre-fill all chunks */
         for (i = 0; i < NUM_CHUNKS; i++) {
             chunk_ptr = hidden->buffer_base + (i * hidden->chunk_size);
-            
             if (device->callbackspec.callback) {
                 device->callbackspec.callback(device->callbackspec.userdata, 
                                              chunk_ptr, hidden->chunk_size);
-                /* Apply conversions if needed during pre-fill */
-                if (hidden->swap_needed) {
-                     swap_audio_bytes_asm(chunk_ptr, hidden->chunk_size);
-                } else if (hidden->xor_needed) {
-                    convert_u8_s8(chunk_ptr, hidden->chunk_size);
-                }
+                if (hidden->swap_needed) swap_audio_bytes_asm(chunk_ptr, hidden->chunk_size);
+                else if (hidden->xor_needed) convert_u8_s8(chunk_ptr, hidden->chunk_size);
             }
         }
 
-        /* Set buffer to play entire circular buffer in REPEAT mode */
         Setbuffer(SR_PLAY, hidden->buffer_base, hidden->buffer_end);
-        
         hidden->playing = 1;
-        hidden->current_fill_ptr = hidden->buffer_base;  /* Start filling chunk 0 next */
-        
-        /* Start continuous playback with REPEAT enabled */
+        hidden->current_fill_ptr = hidden->buffer_base;
         Buffoper(SB_PLA_ENA | SB_PLA_RPT);
     }
 }
@@ -233,19 +174,15 @@ static void mint_audio_stop_hw(SDL_AudioDevice *device)
 static void mint_audio_close_hw(SDL_AudioDevice *device)
 {
     struct SDL_PrivateAudioData *hidden = device->hidden;
-    
     Buffoper(0);
-    
     if (hidden->buffer_base) {
         Mfree(hidden->buffer_base);
         hidden->buffer_base = NULL;
     }
-    
     Unlocksnd();
 }
 
-/* --- SDL Driver Interface --- */
-
+/* --- SDL Interface --- */
 static void ATARI_CloseDevice(SDL_AudioDevice *device)
 {
     if (device->hidden) {
@@ -257,79 +194,51 @@ static void ATARI_CloseDevice(SDL_AudioDevice *device)
 }
 
 /* 
- * WaitDevice:
- * Polls DMA hardware register.
- * Uses pointer stepping to calculate boundaries efficiently (no multiply).
+ * WaitDevice - DROP PREVENTION: DMA must be 2+ chunks ahead
  */
 static void ATARI_WaitDevice(_THIS)
 {
     struct SDL_PrivateAudioData *hidden = this->hidden;
-    Uint8 *dma_pos; 
-    Uint8 *chunk_start, *chunk_end;
-    SndBufPtr pointers;
-
-    /* 
-     * OPTIMIZATION: No multiplication.
-     * Calculate boundaries directly from the current fill pointer.
-     */
-    chunk_start = hidden->current_fill_ptr;
-    chunk_end = chunk_start + hidden->chunk_size;
+    Uint8 *dma_pos;
+    Uint32 dma_offset, fill_offset;
+    int32_t distance;
     
-    while (1) {
-        if (Buffptr(&pointers) == 0) {
-            dma_pos = (Uint8 *)pointers.play;
-            
-            /* Is DMA reading outside our target chunk? */
-            if (dma_pos < chunk_start || dma_pos >= chunk_end) {
-                /* Safe to fill this chunk */
-                break;
-            }
+    fill_offset = hidden->current_fill_ptr - hidden->buffer_base;
+    
+    while (hidden->playing) {
+        dma_pos = (Uint8 *)(((Uint32)*DMA_PTR_HIGH << 16) | 
+                         ((Uint32)*DMA_PTR_MID  << 8)  | 
+                          (Uint32)*DMA_PTR_LOW);
+        
+        dma_offset = dma_pos - hidden->buffer_base;
+        distance = (int32_t)dma_offset - (int32_t)fill_offset;
+        
+        /* Wraparound-safe distance */
+        if (distance < 0) distance += hidden->total_size;
+        
+        /* CRITICAL: DMA must be at least 2 chunks ahead to prevent underrun */
+        if (distance >= (hidden->chunk_size * 2)) {
+            break; /* Safe to fill */
         }
-        pthread_yield();
+        
+        pthread_yield(); /* FreeMiNT optimization */
     }
 }
 
-/* 
- * GetDeviceBuf:
- * Returns the pre-calculated pointer to the current chunk.
- */
 static Uint8 *ATARI_GetDeviceBuf(_THIS)
 {
-    struct SDL_PrivateAudioData *hidden = this->hidden;
-    
-    /* Simply return the pre-calculated pointer */
-    return hidden->current_fill_ptr;
+    return this->hidden->current_fill_ptr;
 }
 
-/* 
- * PlayDevice:
- * Swaps bytes and advances the fill pointer (Pointer Stepping).
- */
 static void ATARI_PlayDevice(_THIS)
 {
     struct SDL_PrivateAudioData *hidden = this->hidden;
-    Uint8 *filled_chunk;
+    Uint8 *filled_chunk = hidden->current_fill_ptr;
     
-    /* 
-     * The chunk we just filled is pointed to by current_fill_ptr.
-     * (SDL wrote to it directly via GetDeviceBuf).
-     */
-    filled_chunk = hidden->current_fill_ptr;
-
-    /* Apply Format Conversions */
-    if (hidden->swap_needed) {
-         swap_audio_bytes_asm(filled_chunk, hidden->chunk_size);
-    } else if (hidden->xor_needed) {
-        convert_u8_s8(filled_chunk, hidden->chunk_size);
-    }
-
-    /* 
-     * OPTIMIZATION: Advance pointer instead of index math.
-     * Just pointer addition.
-     */
+    if (hidden->swap_needed) swap_audio_bytes_asm(filled_chunk, hidden->chunk_size);
+    else if (hidden->xor_needed) convert_u8_s8(filled_chunk, hidden->chunk_size);
+    
     hidden->current_fill_ptr += hidden->chunk_size;
-    
-    /* Wrap around check */
     if (hidden->current_fill_ptr >= hidden->buffer_end) {
         hidden->current_fill_ptr = hidden->buffer_base;
     }
@@ -343,7 +252,6 @@ static int ATARI_OpenDevice(SDL_AudioDevice *device, const char *devname)
 
     mint_audio_open_hw(device, &device->spec);
     mint_audio_start_hw(device);
-    
     return 0;
 }
 
@@ -356,12 +264,10 @@ static SDL_bool ATARI_Init(SDL_AudioDriverImpl *impl)
     impl->OpenDevice = ATARI_OpenDevice;
     impl->CloseDevice = ATARI_CloseDevice;
     impl->OnlyHasDefaultOutputDevice = SDL_TRUE;
-    
     impl->WaitDevice = ATARI_WaitDevice;
     impl->GetDeviceBuf = ATARI_GetDeviceBuf;
     impl->PlayDevice = ATARI_PlayDevice;
-    
-    impl->ProvidesOwnCallbackThread = SDL_FALSE; 
+    impl->ProvidesOwnCallbackThread = SDL_FALSE;
     impl->HasCaptureSupport = SDL_FALSE;
 
     return SDL_TRUE;
@@ -369,7 +275,7 @@ static SDL_bool ATARI_Init(SDL_AudioDriverImpl *impl)
 
 AudioBootStrap ATARIAUDIO_bootstrap = {
     "mint_xbios",
-    "Atari XBIOS Audio (Circular Buffer)",
+    "Atari XBIOS Audio (Drop-Free Polling)",
     ATARI_Init,
     SDL_FALSE
 };
