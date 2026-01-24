@@ -71,7 +71,7 @@ void GEM_PumpEvents(_THIS)
                0x101, 3, (~mb) & 3,
                0, 0, 0, 0, 0,
                0, 0, 0, 0, 0,
-               msg, 1L,
+               msg, 0L,
                &mx, &my, &mb, &kstate, &key_state, &mc, sdl_global_aes);
     if (!gem_events) {
         return;
