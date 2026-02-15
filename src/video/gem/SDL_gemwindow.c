@@ -22,6 +22,9 @@
 #define MERGE_THRESHOLD 16
 #define PERIODIC_REFRESH_FRAMES 60
 
+#define MIN_DIRTY_RECT_WIDTH  321
+#define MIN_DIRTY_RECT_HEIGHT 241
+
 MFDB screen_mfdb = {0};
 
 #ifdef SDL_GEM_DIRTY_RECT
@@ -35,10 +38,10 @@ static int MergeDirtyRects(const SDL_Rect *input, int num_input,
    ============================================ */
 
 #ifndef SDL_GEM_DIRTY_RECT_ASM
-/* Fast 8-bit row checksum - 68000 optimized
+/* Fast 16-bit row checksum - 68000 optimized
  * Unrolled to avoid loop overhead, uses 16-bit accumulation
  * This function is called frequently, must be fast on 68000 */
-static Uint8 CalculateRowChecksum(const Uint8 *row, int len)
+static Uint16 CalculateRowChecksum(const Uint8 *row, int len)
 {
     Uint16 sum = 0;
     
@@ -69,8 +72,7 @@ static Uint8 CalculateRowChecksum(const Uint8 *row, int len)
         sum += (*row) << 8;
     }
     
-    /* Fold 16-bit to 8-bit with XOR (good bit mixing) */
-    return (Uint8)((sum ^ (sum >> 8)) & 0xFF);
+    return sum;
 }
 #endif /* SDL_GEM_DIRTY_RECT_ASM */
 
@@ -86,16 +88,17 @@ static int InitRowChecksums(SDL_WindowData *data, int height)
     }
     
     /* Allocate with 16-byte alignment for 68000 movem */
-    data->raw_checksum_buffer = SDL_malloc(height + 16);
+    data->raw_checksum_buffer = SDL_malloc(height * 2 + 16);
     if (!data->raw_checksum_buffer) {
         data->row_checksums = NULL;
         return 0;
     }
     
-    data->row_checksums = (Uint8*)(((size_t)data->raw_checksum_buffer + 15) & ~(size_t)15);
+    data->row_checksums = (Uint16*)(((size_t)data->raw_checksum_buffer + 15) & ~(size_t)15);
     
-    /* Initialize to 0xFF to force full first frame update */
-    SDL_memset(data->row_checksums, 0xFF, height);
+    for (int i = 0; i < height; i++) {
+        data->row_checksums[i] = 0xFFFF;
+    }
     data->last_frame_counter = 0;
     
     return 1;
@@ -120,18 +123,18 @@ static void UpdateRowChecksumsAfterBlit(SDL_WindowData *data,
     /* Clear bytes-per-row calculation */
     if (data->final_mfdb.fd_nplanes <= 8) {
         /* Planar modes: 8-bit chunky (1 byte/pixel) */
-        bytes_per_row = data->last_w;
+        bytes_per_row = data->work_w;
     } else {
         /* Truecolor: fd_nplanes is actually bits-per-pixel */
         {
             int bpp = data->final_mfdb.fd_nplanes;
             if (bpp == 16) {
-                bytes_per_row = data->last_w * 2;
+                bytes_per_row = data->work_w * 2;
             } else if (bpp == 24) {
-                bytes_per_row = data->last_w * 3;
+                bytes_per_row = data->work_w * 3;
             } else {
                 /* 32 or default */
-                bytes_per_row = data->last_w * 4;
+                bytes_per_row = data->work_w * 4;
             }
         }
     }
@@ -143,7 +146,7 @@ static void UpdateRowChecksumsAfterBlit(SDL_WindowData *data,
         
         /* Bounds check */
         if (start_y < 0) start_y = 0;
-        if (end_y > data->last_h) end_y = data->last_h;
+        if (end_y > data->work_h) end_y = data->work_h;
         
         for (y = start_y; y < end_y; y++) {
             data->row_checksums[y] = CALCULATE_ROW_CHECKSUM(
@@ -153,7 +156,7 @@ static void UpdateRowChecksumsAfterBlit(SDL_WindowData *data,
 }
 
 /* ============================================
-   DetectChangesAndBuildRect - COMPLETE FIXED VERSION
+   DetectChangesAndBuildRect
    
    Detects changed rows using 8-bit checksums and builds
    an optimized update rectangle.
@@ -175,7 +178,7 @@ static int DetectChangesAndBuildRect(SDL_WindowData *data,
     int pitch, y, h;
     int first_changed = -1, last_changed = -1;
     int bytes_per_row;
-    Uint8 old_sum, new_sum;
+    Uint16 old_sum, new_sum;
     
     /* ========================================
        SAFETY CHECKS
@@ -185,7 +188,11 @@ static int DetectChangesAndBuildRect(SDL_WindowData *data,
     if (!data || !data->row_checksums || !data->buffer) {
         return 0;
     }
-    
+
+    if (data->work_w < MIN_DIRTY_RECT_WIDTH || data->work_h < MIN_DIRTY_RECT_HEIGHT) {
+        return 0;
+    }
+
     /* ========================================
        PERIODIC FULL REFRESH (every 60 frames)
        Prevents checksum drift and ensures sync
@@ -196,7 +203,7 @@ static int DetectChangesAndBuildRect(SDL_WindowData *data,
         data->last_frame_counter = 0;
         /* Invalidate all checksums to force full update */
         if (data->row_checksums) {
-            SDL_memset(data->row_checksums, 0xFF, data->last_h);
+            SDL_memset(data->row_checksums, 0xFF, data->work_h);
         }
         SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, 
                      "GEM: Periodic full refresh (frame %d)", 
@@ -219,10 +226,8 @@ static int DetectChangesAndBuildRect(SDL_WindowData *data,
 
     /* USE checksum for single full-screen rect (high optimization potential) */
     if (numrects == 1 && 
-        input_rects[0].x == 0 && 
-        input_rects[0].y == 0 &&
-        input_rects[0].w == data->last_w && 
-        input_rects[0].h == data->last_h) {
+        input_rects[0].x == 0 && input_rects[0].y == 0 &&
+        input_rects[0].w == data->work_w && input_rects[0].h == data->work_h) {
         
         /* Full screen update - proceed with checksum scan below */
         SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
@@ -244,22 +249,22 @@ static int DetectChangesAndBuildRect(SDL_WindowData *data,
     
     buffer = (Uint8*)data->buffer;
     pitch = data->buffer_pitch;
-    h = data->last_h;
+    h = data->work_h;
     
     /* Calculate bytes per row based on format */
     if (data->final_mfdb.fd_nplanes <= 8) {
         /* Planar modes: 8-bit chunky (1 byte/pixel) */
-        bytes_per_row = data->last_w;
+        bytes_per_row = data->work_w;
     } else {
         /* Truecolor: fd_nplanes is actually bits-per-pixel */
         int bpp = data->final_mfdb.fd_nplanes;
         if (bpp == 16) {
-            bytes_per_row = data->last_w * 2;
+            bytes_per_row = data->work_w * 2;
         } else if (bpp == 24) {
-            bytes_per_row = data->last_w * 3;
+            bytes_per_row = data->work_w * 3;
         } else {
             /* 32 or default */
-            bytes_per_row = data->last_w * 4;
+            bytes_per_row = data->work_w * 4;
         }
     }
     
@@ -270,7 +275,7 @@ static int DetectChangesAndBuildRect(SDL_WindowData *data,
     
     for (y = 0; y < h; y++) {
         /* Safety: ensure we don't read past checksum buffer */
-        if (y >= data->last_h) {
+        if (y >= data->work_h) {
             /* Window grew - consider this row changed */
             if (first_changed == -1) {
                 first_changed = y;
@@ -325,7 +330,7 @@ static int DetectChangesAndBuildRect(SDL_WindowData *data,
     /* Build optimized rect covering only changed rows */
     optimized_rect->x = 0;
     optimized_rect->y = first_changed;
-    optimized_rect->w = data->last_w;
+    optimized_rect->w = data->work_w;
     optimized_rect->h = last_changed - first_changed + 1;
     
     SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
@@ -524,6 +529,7 @@ int GEM_CreateWindowFramebuffer(SDL_VideoDevice *this, SDL_Window *window,
     int w, h;
     size_t chunky_size, planar_size;
     void *raw_ptr;
+    Uint32 new_format;
     
     if (!data) {
         return SDL_SetError("Window data not found");
@@ -531,7 +537,48 @@ int GEM_CreateWindowFramebuffer(SDL_VideoDevice *this, SDL_Window *window,
     
     SDL_GetWindowSize(window, &w, &h);
     
-    /* Free existing buffers */
+    /* Determine format from video planes */
+    switch (video->planes) {
+        case 1:
+        case 2:
+        case 4:
+        case 8:
+            new_format = SDL_PIXELFORMAT_RGB332;
+            break;
+        case 16:
+            new_format = SDL_PIXELFORMAT_RGB565;
+            break;
+        case 24:
+            new_format = SDL_PIXELFORMAT_RGB888;
+            break;
+        case 32:
+            new_format = SDL_PIXELFORMAT_ARGB8888;
+            break;
+        default:
+            new_format = SDL_PIXELFORMAT_RGB565;
+            break;
+    }
+    
+    /* Reuse existing buffer if size and format match */
+    if (data->raw_buffer && data->buffer && 
+        w == data->work_w && h == data->work_h &&
+        data->buffer_pitch > 0) {
+        
+        SDL_LogInfo(SDL_LOG_CATEGORY_VIDEO, 
+                    "GEM: Reusing existing framebuffer %p (%dx%d, pitch=%u)",
+                    data->buffer, w, h, data->buffer_pitch);
+        
+        *format = new_format;
+        *pixels = data->buffer;
+        *pitch = data->buffer_pitch;
+        return 0;
+    }
+    
+    SDL_LogInfo(SDL_LOG_CATEGORY_VIDEO, 
+                "GEM: Creating new framebuffer for %dx%d (existing was %p, last was %dx%d)",
+                w, h, data->buffer, data->work_w, data->work_h);
+    
+    /* Free existing buffers only if size changed or not allocated */
     if (data->raw_buffer) {
         SDL_free(data->raw_buffer);
         data->buffer = NULL;
@@ -548,34 +595,24 @@ int GEM_CreateWindowFramebuffer(SDL_VideoDevice *this, SDL_Window *window,
         data->raw_remap_buffer = NULL;
     }
     
+#ifdef SDL_GEM_DIRTY_RECT
+    if (data->raw_checksum_buffer) {
+        SDL_free(data->raw_checksum_buffer);
+        data->row_checksums = NULL;
+        data->raw_checksum_buffer = NULL;
+    }
+#endif
+    
+    /* Recalculate buffer sizes with new dimensions */
     CalculateBufferSizes(video, w, h, pitch, &chunky_size, &planar_size, data);
     
-    switch (video->planes) {
-        case 1:
-        case 2:
-        case 4:
-        case 8:
-            *format = SDL_PIXELFORMAT_RGB332;
-            break;
-        case 16:
-            *format = SDL_PIXELFORMAT_RGB565;
-            break;
-        case 24:
-            *format = SDL_PIXELFORMAT_RGB888;
-            break;
-        case 32:
-            *format = SDL_PIXELFORMAT_ARGB8888;
-            break;
-        default:
-            *format = SDL_PIXELFORMAT_RGB565;
-            break;
-    }
-    
+    /* Allocate chunky buffer (application writes here) */
     raw_ptr = SDL_malloc(chunky_size + 16);
     if (!raw_ptr) return SDL_OutOfMemory();
     data->raw_buffer = raw_ptr;
     data->buffer = (void*)(((size_t)raw_ptr + 15) & ~(size_t)15);
     
+    /* Allocate final buffer (VDI blit source) */
     raw_ptr = SDL_malloc(planar_size + 16);
     if (!raw_ptr) {
         SDL_free(data->raw_buffer);
@@ -587,6 +624,7 @@ int GEM_CreateWindowFramebuffer(SDL_VideoDevice *this, SDL_Window *window,
     data->final_buffer = (void*)(((size_t)raw_ptr + 15) & ~(size_t)15);
     data->final_buffer_size = planar_size;
     
+    /* Allocate remap buffer for non-identity palette (planar modes only) */
     if (video->planes <= 8 && !video->use_identity_palette) {
         raw_ptr = SDL_malloc((size_t)data->aligned_w + 16);
         if (!raw_ptr) {
@@ -603,8 +641,9 @@ int GEM_CreateWindowFramebuffer(SDL_VideoDevice *this, SDL_Window *window,
         data->remap_buffer_size = (size_t)data->aligned_w;
     }
     
+    /* Setup MFDB for VDI */
     data->final_mfdb.fd_addr = data->final_buffer;
-    data->final_mfdb.fd_w = w;
+    data->final_mfdb.fd_w = w;  /* Use aligned width ? */
     data->final_mfdb.fd_h = h;
     data->final_mfdb.fd_wdwidth = data->aligned_w >> 4;
     data->final_mfdb.fd_stand = 0;
@@ -614,19 +653,22 @@ int GEM_CreateWindowFramebuffer(SDL_VideoDevice *this, SDL_Window *window,
     data->final_mfdb.fd_r3 = 0;
     
     data->buffer_pitch = (unsigned short)(*pitch);
+    *format = new_format;
     *pixels = data->buffer;
-    data->last_w = w;
-    data->last_h = h;
     
 #ifdef SDL_GEM_DIRTY_RECT
-    /* Initialize row checksums (BUG #5: always reallocates) */
+    /* Reinitialize row checksums */
     if (!InitRowChecksums(data, h)) {
         SDL_LogWarn(SDL_LOG_CATEGORY_VIDEO, 
                     "GEM: Row checksum init failed, change detection disabled");
     }
-    /* Initialize previous dirty rects to empty */
     data->num_prev_dirty_rects = 0;
-#endif /* SDL_GEM_DIRTY_RECT */
+#endif
+    
+    SDL_LogInfo(SDL_LOG_CATEGORY_VIDEO,
+                "GEM: Created framebuffer %p (%dx%d, aligned=%dx%d, pitch=%u, format=%s)",
+                data->buffer, w, h, data->aligned_w, h, data->buffer_pitch,
+                SDL_GetPixelFormatName(new_format));
     
     return 0;
 }
@@ -792,6 +834,9 @@ int GEM_UpdateWindowFramebuffer(SDL_VideoDevice *this, SDL_Window *window,
         return SDL_SetError("Framebuffer not initialised");
     }
 
+    // SDL_Log("UpdateWindowFramebuffer: buffer=%p, pitch=%u, work_w=%d, work_h=%d, aligned_w=%d",
+    //         data->buffer, data->buffer_pitch, data->work_w, data->work_h, data->aligned_w);
+
 #ifdef SDL_GEM_DIRTY_RECT
     /* STEP A: Detect changes using row checksums */
     change_detect_result = DetectChangesAndBuildRect(data, rects, numrects,
@@ -843,8 +888,8 @@ int GEM_UpdateWindowFramebuffer(SDL_VideoDevice *this, SDL_Window *window,
         SDL_Rect full_rect;
         full_rect.x = 0;
         full_rect.y = 0;
-        full_rect.w = data->last_w;
-        full_rect.h = data->last_h;
+        full_rect.w = data->work_w;
+        full_rect.h = data->work_h;
 
         num_merged = 1;
         merged[0] = full_rect;
@@ -905,17 +950,17 @@ int GEM_UpdateWindowFramebuffer(SDL_VideoDevice *this, SDL_Window *window,
 
             for (i = 0; i < num_merged; i++) {
                 /* Validate merged rectangles */
-                if (merged[i].x >= data->last_w || merged[i].y >= data->last_h) {
+                if (merged[i].x >= data->work_w || merged[i].y >= data->work_h) {
                     continue;
                 }
                 
                 /* Clip to window bounds - use copy to avoid modifying original */
                 r = merged[i];
-                if (r.x + r.w > data->last_w) {
-                    r.w = data->last_w - r.x;
+                if (r.x + r.w > data->work_w) {
+                    r.w = data->work_w - r.x;
                 }
-                if (r.y + r.h > data->last_h) {
-                    r.h = data->last_h - r.y;
+                if (r.y + r.h > data->work_h) {
+                    r.h = data->work_h - r.y;
                 }
                 if (r.w <= 0 || r.h <= 0) {
                     continue;
@@ -946,8 +991,8 @@ int GEM_UpdateWindowFramebuffer(SDL_VideoDevice *this, SDL_Window *window,
                 /* Clip to buffer bounds */
                 if (src_x < 0) { src_w += src_x; src_x = 0; }
                 if (src_y < 0) { src_h += src_y; src_y = 0; }
-                if (src_x + src_w > data->last_w) src_w = data->last_w - src_x;
-                if (src_y + src_h > data->last_h) src_h = data->last_h - src_y;
+                if (src_x + src_w > data->work_w) src_w = data->work_w - src_x;
+                if (src_y + src_h > data->work_h) src_h = data->work_h - src_y;
 
                 if (src_w <= 0 || src_h <= 0) continue;
 
@@ -992,8 +1037,8 @@ int GEM_UpdateWindowFramebuffer(SDL_VideoDevice *this, SDL_Window *window,
         SDL_Rect full_rect;
         full_rect.x = 0;
         full_rect.y = 0;
-        full_rect.w = data->last_w;
-        full_rect.h = data->last_h;
+        full_rect.w = data->work_w;
+        full_rect.h = data->work_h;
         UpdateRowChecksumsAfterBlit(data, &full_rect, 1);
     }
     else {
@@ -1011,8 +1056,8 @@ int GEM_UpdateWindowFramebuffer(SDL_VideoDevice *this, SDL_Window *window,
             data->num_prev_dirty_rects = 1;
             data->prev_dirty_rects[0].x = 0;
             data->prev_dirty_rects[0].y = 0;
-            data->prev_dirty_rects[0].w = data->last_w;
-            data->prev_dirty_rects[0].h = data->last_h;
+            data->prev_dirty_rects[0].w = data->work_w;
+            data->prev_dirty_rects[0].h = data->work_h;
         }
     }
 #endif
@@ -1169,6 +1214,7 @@ void GEM_SetWindowSize(SDL_VideoDevice *this, SDL_Window *window)
     SDL_GetWindowSize(window, &w, &h);
     data->work_w = (short)w;
     data->work_h = (short)h;
+    data->aligned_w = MFDB_STRIDE(w);
     
     mt_wind_calc(WC_BORDER, data->win_type,
                  data->work_x, data->work_y, data->work_w, data->work_h,
@@ -1178,6 +1224,7 @@ void GEM_SetWindowSize(SDL_VideoDevice *this, SDL_Window *window)
     mt_wind_set(data->handle, WF_CURRXYWH,
                 data->win_x, data->win_y, data->win_w, data->win_h,
                 sdl_global_aes);
+             
 }
 
 void GEM_ShowWindow(SDL_VideoDevice *this, SDL_Window *window)

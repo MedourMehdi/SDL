@@ -23,7 +23,7 @@
 |   8(sp)  = int len           - length in bytes
 | 
 | OUTPUT:
-|   d0.b   = 8-bit checksum
+|   d0.w   = 16-bit checksum
 | 
 | ALGORITHM:
 |   1. Sum all bytes as 16-bit words (prevents overflow)
@@ -115,22 +115,12 @@ _Atari_CalculateRowChecksum:
     add.w   d2,d1               | sum += byte << 8
 
 .fold:
-    | Fold 16-bit sum to 8-bit checksum using XOR
-    | result = (sum ^ (sum >> 8)) & 0xFF
-    | This provides good bit mixing and prevents similar values
-    | from having identical checksums
-    
-    move.w  d1,d2               | d2 = sum
-    lsr.w   #8,d2               | d2 = sum >> 8 (high byte -> low byte)
-    eor.w   d2,d1               | d1 = sum ^ (sum >> 8)
-    
-    | Extract low byte as result
-    move.b  d1,d0               | d0.b = checksum (return value)
+    | Return full 16-bit checksum - no folding
+    move.w  d1,d0               | d0.w = checksum (return value)
     
     | Restore registers and return
     movem.l (sp)+,d2-d3
     rts
-
 
 | ============================================================================
 | Atari_CalculateRowChecksum_320 - Optimized for 320-pixel rows
@@ -142,7 +132,7 @@ _Atari_CalculateRowChecksum:
 |   4(sp)  = const Uint8 *row  - pointer to exactly 320 bytes
 | 
 | OUTPUT:
-|   d0.b   = 8-bit checksum
+|   d0.w   = 16-bit checksum
 | 
 | OPTIMIZATION:
 |   - Fully unrolled loop (no branch overhead)
@@ -217,11 +207,8 @@ _Atari_CalculateRowChecksum_320:
         add.w   d5,d1
     .endr
     
-    | Fold 16-bit to 8-bit
-    move.w  d1,d2
-    lsr.w   #8,d2
-    eor.w   d2,d1
-    move.b  d1,d0               | Return checksum
+    | Return full 16-bit checksum
+    move.w  d1,d0               | Return checksum
     
     movem.l (sp)+,d2-d5
     rts

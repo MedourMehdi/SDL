@@ -3815,7 +3815,7 @@ case "$host" in
                                                     , enable_render_gem=yes)
                     if test x$enable_render_gem = xyes; then
                         AC_DEFINE(SDL_VIDEO_RENDER_GEM, 1, [ ])
-                        SOURCES="$SOURCES $srcdir/src/render/gem/*.c"
+                        SOURCES="$SOURCES $srcdir/src/render/gem/SDL_render_gem.c"
                         SUMMARY_video="${SUMMARY_video} atari_render_gem"
                     fi
                     AC_ARG_ENABLE(gem-c2p-asm,
