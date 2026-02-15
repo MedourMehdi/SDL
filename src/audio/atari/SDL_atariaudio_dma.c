@@ -1,7 +1,7 @@
 /* 
  * SDL_atariaudio.c - Drop-Free Hybrid Polling
  * 
- * CRITICAL FIX: DMA distance check prevents underrun
+ * N.B. DMA distance check prevents underrun
  */
 
 #include "../../SDL_internal.h"
@@ -216,7 +216,7 @@ static void ATARI_WaitDevice(_THIS)
         /* Wraparound-safe distance */
         if (distance < 0) distance += hidden->total_size;
         
-        /* CRITICAL: DMA must be at least 2 chunks ahead to prevent underrun */
+        /* DMA must be at least 2 chunks ahead to prevent underrun */
         if (distance >= (hidden->chunk_size * 2)) {
             break; /* Safe to fill */
         }

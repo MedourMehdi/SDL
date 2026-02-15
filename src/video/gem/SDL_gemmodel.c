@@ -2,7 +2,7 @@
    FILE: src/video/ataricommon/SDL_atarimodel.c
    Hardware detection implementation
    ============================================ */
-#include "SDL_atarimodel.h"
+#include "SDL_gemmodel.h"
 #include <mint/cookie.h>
 #include <mint/osbind.h>
 #include <mint/sysvars.h>
@@ -43,15 +43,18 @@ void Atari_DetectHW(void)
 
     /* CPU detection */
     if (Getcookie(C__CPU, &cookie_cpu) == C_FOUND) {
-        if (cookie_cpu >= 68060) {
+        /* The low WORD contains the CPU type: 0, 10, 20, 30, 40, or 60 */
+        int cpu_type = (int)(cookie_cpu & 0xFFFF);
+
+        if (cpu_type >= 60) {
             hw_info.cpu = ATARI_CPU_68060;
-        } else if (cookie_cpu >= 68040) {
+        } else if (cpu_type >= 40) {
             hw_info.cpu = ATARI_CPU_68040;
-        } else if (cookie_cpu >= 68030) {
+        } else if (cpu_type >= 30) {
             hw_info.cpu = ATARI_CPU_68030;
-        } else if (cookie_cpu >= 68020) {
+        } else if (cpu_type >= 20) {
             hw_info.cpu = ATARI_CPU_68020;
-        } else if (cookie_cpu >= 68010) {
+        } else if (cpu_type >= 10) {
             hw_info.cpu = ATARI_CPU_68010;
         } else {
             hw_info.cpu = ATARI_CPU_68000;

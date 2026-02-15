@@ -584,16 +584,11 @@ if test x$enable_threads != xyes; then
 else
     SUMMARY_modules="${SUMMARY_modules} threads"
 fi
-AC_ARG_ENABLE(threads,
-[AS_HELP_STRING([--enable-atari-threads], [Enable experimental atari threads subsystem [default=yes]])],
-              , enable_atari_threads=no)
 
-AC_ARG_ENABLE(timers,
-[AS_HELP_STRING([--enable-atari-timers], [Enable eperimental atari timer subsystem [default=yes]])],
-              , enable_atari_timers=no)           
 AC_ARG_ENABLE(timers,
 [AS_HELP_STRING([--enable-timers], [Enable the timer subsystem [default=yes]])],
               , enable_timers=yes)
+
 if test x$enable_timers != xyes; then
     AC_DEFINE(SDL_TIMERS_DISABLED, 1, [ ])
 else
@@ -3787,12 +3782,6 @@ case "$host" in
                 else
                     AC_MSG_ERROR([GEM library not found])
                 fi
-                # Set up files for the thread library
-                # if test x$enable_atari_threads = xyes; then
-                #     AC_DEFINE(SDL_THREAD_ATARI, 1, [ ])
-                #     SOURCES="$SOURCES $srcdir/src/thread/atari/*.c"
-                #     have_threads=yes
-                # fi
                 # Set up compiler flags
                 CFLAGS="$CFLAGS -fomit-frame-pointer -fno-strict-aliasing -O2"
                 CXXFLAGS="$CXXFLAGS -fomit-frame-pointer -fno-strict-aliasing -O2"
@@ -3806,23 +3795,53 @@ case "$host" in
                     have_audio=yes
                     SUMMARY_audio="${SUMMARY_audio} atari"
                 fi
+
                 dnl Setup input drivers
                 AC_DEFINE(SDL_INPUT_ATARI, 1, [ ])
                 # SDLMAIN_SOURCES="$srcdir/src/main/gem/*.c"
                 SOURCES="$SOURCES $srcdir/src/joystick/atari/*.c"
                 have_input=yes
-                SUMMARY_input="${SUMMARY_input} atari"   
+                SUMMARY_input="${SUMMARY_input} atari"
+
                 dnl Setup video drivers
                 if test x$enable_video = xyes; then
-                    # AC_DEFINE(SDL_VIDEO_DRIVER_ATARI, 1, [ ])
                     AC_DEFINE(SDL_VIDEO_DRIVER_GEM, 1, [ ])
-                    SOURCES="$SOURCES $srcdir/src/video/atari/*.c"
                     SOURCES="$SOURCES $srcdir/src/video/gem/*.c"
-                    SOURCES="$SOURCES $srcdir/src/video/ataricommon/*.c"
-                    SOURCES="$SOURCES $srcdir/src/video/atari/SDL_ataric2p.S"
+                    SOURCES="$SOURCES $srcdir/src/video/gem/*.S"
+                    SUMMARY_video="${SUMMARY_video} gem"
                     have_video=yes
-                    SUMMARY_video="${SUMMARY_video} atari gem"
+                    AC_ARG_ENABLE(render-gem,
+                    [AS_HELP_STRING([--enable-render-gem], [enable the GEM render driver [default=yes]])],
+                                                    , enable_render_gem=yes)
+                    if test x$enable_render_gem = xyes; then
+                        AC_DEFINE(SDL_VIDEO_RENDER_GEM, 1, [ ])
+                        SOURCES="$SOURCES $srcdir/src/render/gem/*.c"
+                        SUMMARY_video="${SUMMARY_video} atari_render_gem"
+                    fi
+                    AC_ARG_ENABLE(gem-c2p-asm,
+                    [AS_HELP_STRING([--enable-gem-c2p-asm], [Enable GEM c2p assembly code [default=yes]])],
+                                , enable_gem_c2p_asm=yes)                    
+                    if test x$enable_gem_c2p_asm = xyes; then
+                        AC_DEFINE(SDL_GEM_C2P_ASM, 1, [ ])
+                        SUMMARY_video="${SUMMARY_video} gem_c2p_asm"
+                    fi
+                    AC_ARG_ENABLE(gem-dirtyrect,
+                    [AS_HELP_STRING([--enable-gem-dirtyrect], [Enable GEM dirty rect optimzation [default=yes]])],
+                                , enable_gem_dirtyrect=yes)                    
+                    if test x$enable_gem_dirtyrect = xyes; then
+                        AC_DEFINE(SDL_GEM_DIRTY_RECT, 1, [ ])
+                        AC_ARG_ENABLE(gem-dirtyrect-asm,
+                        [AS_HELP_STRING([--enable-gem-dirtyrect-asm], [Enable GEM dirty rect assembly code [default=yes]])],
+                                    , enable_gem_dirtyrect_asm=yes)                        
+                        if test x$enable_gem_dirtyrect_asm = xyes; then
+                            AC_DEFINE(SDL_GEM_DIRTY_RECT_ASM, 1, [ ])
+                            SUMMARY_video="${SUMMARY_video} gem_dirtyrect_asm"
+                        else
+                            SUMMARY_video="${SUMMARY_video} gem_dirtyrect"
+                        fi
+                    fi              
                 fi
+                
                 # Disable incompatible features
                 enable_haptic=no
                 AC_DEFINE(SDL_HAPTIC_DISABLED, 1, [ ])
@@ -3837,12 +3856,11 @@ case "$host" in
                 AC_DEFINE(SDL_HIDAPI_DISABLED, 1, [ ])
                 enable_opengl_es2=no
                 enable_offscreen=no
-                enable_loadso=no        # Add this - Mint doesn't support dynamic loading
+                enable_loadso=no        # Mint doesn't support dynamic loading
                 enable_shared=no        # Force static library build
                 # Enable Atari-specific features
                 enable_assembly=no
-                enable_power=no
-                enable_atari_assembly=no               
+                enable_power=no       
                 ;;
             *-*-android*)
                 # Android

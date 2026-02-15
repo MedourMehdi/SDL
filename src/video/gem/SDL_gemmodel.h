@@ -7,6 +7,15 @@
 #include "../../SDL_internal.h"
 
 /* CPU types */
+
+/*
+0 	= 	MC-68000
+10 	= 	MC-68010
+20 	= 	MC-68020
+30 	= 	MC-68030
+40 	= 	MC-68040
+60 	= 	MC-68060
+*/
 enum {
     ATARI_CPU_UNKNOWN = -1,
     ATARI_CPU_68000,

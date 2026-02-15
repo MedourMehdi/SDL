@@ -2,7 +2,8 @@
    FILE: src/video/ataricommon/SDL_atarikeys.c
    Keyboard mapping implementation
    ============================================ */
-#include "SDL_atarikeys.h"
+#include "SDL_gemkeys.h"
+#include "SDL_keyboard.h"
 
 #include <mt_gem.h>
 

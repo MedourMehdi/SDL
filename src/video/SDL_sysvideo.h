@@ -536,10 +536,6 @@ extern int SDL_GL_SwapWindowWithResult(SDL_Window *window);
 const char *SDL_GetCSSCursorName(SDL_SystemCursor id, const char **fallback_name);
 #endif
 
-#ifdef SDL_VIDEO_DRIVER_ATARI
-extern VideoBootStrap ATARI_bootstrap;
-#endif
-
 #ifdef SDL_VIDEO_DRIVER_GEM
 extern VideoBootStrap GEM_bootstrap;
 #endif

@@ -422,6 +422,7 @@
 #undef SDL_VIDEO_RENDER_OGL_ES
 #undef SDL_VIDEO_RENDER_OGL_ES2
 #undef SDL_VIDEO_RENDER_DIRECTFB
+#undef SDL_VIDEO_RENDER_GEM
 #undef SDL_VIDEO_RENDER_METAL
 
 /* Enable OpenGL support */
@@ -442,9 +443,7 @@
 /* Enable Metal support */
 #undef SDL_VIDEO_METAL
 
-#undef SDL_VIDEO_DRIVER_ATARI
 #undef SDL_VIDEO_DRIVER_GEM
-#undef SDL_AUDIO_DRIVER_ATARI
 #undef SDL_INPUT_ATARI
 #undef SDL_TIMER_ATARI
 
@@ -482,6 +481,11 @@
 #undef SDL_ALTIVEC_BLITTERS
 #undef SDL_ARM_SIMD_BLITTERS
 #undef SDL_ARM_NEON_BLITTERS
+#undef SDL_GEM_C2P_ASM
+#undef SDL_GEM_DIRTY_RECT_ASM
+
+/* Enable dirty rect check before considering c2p processing */
+#undef SDL_GEM_DIRTY_RECT
 
 /* Whether SDL_DYNAMIC_API needs dlopen() */
 #undef DYNAPI_NEEDS_DLOPEN
