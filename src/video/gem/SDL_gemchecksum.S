@@ -1,405 +1,234 @@
 | ============================================================================
 | SDL_gemchecksum.S – m68000 Optimized Checksum Routines
-| Performance-critical functions for dirty rectangle detection
-| 
-| Copyright (C) 2025 - Optimized for Atari ST/TT/Falcon
-| ============================================================================
-| PERFORMANCE TARGETS:
-|   - CalculateRowChecksum: ~160 cycles for 320 bytes (4x faster than C)
-|   - CalculateRowChecksum_320: ~120 cycles (5.3x faster than C)
-|   - Batch processing saves additional function call overhead
+|
+| Architecture: Motorola 68000 (Atari ST/TT/Falcon)
+| ABI Compliance: d2-d7/a2-a6 callee-saved
+|
+| Optimized for: 320x200 (ST low), 640x400 (TT high), batch processing
+| Algorithm: 16-bit word sum, folded to 8-bit via XOR
 | ============================================================================
 
     .text
 
+
 | ============================================================================
-| Atari_CalculateRowChecksum - Generic fast row checksum
-| 
+| Atari_CalculateRowChecksum
+| Generic row checksum for arbitrary length
+|
 | C prototype:
 |   Uint8 Atari_CalculateRowChecksum(const Uint8 *row, int len);
-| 
-| INPUTS:
-|   4(sp)  = const Uint8 *row  - pointer to row data
-|   8(sp)  = int len           - length in bytes
-| 
-| OUTPUT:
-|   d0.w   = 16-bit checksum
-| 
-| ALGORITHM:
-|   1. Sum all bytes as 16-bit words (prevents overflow)
-|   2. Fold 16-bit sum to 8-bit using XOR for good bit mixing
-|   3. Process 16 bytes per iteration for maximum efficiency
-| 
-| PERFORMANCE:
-|   - Main loop: ~12 cycles per word (8 load + 4 add)
-|   - 320 bytes = 160 words = ~1,920 cycles
-|   - C version: ~640 cycles per row on average
-|   - Speedup: ~4x faster
-| 
-| REGISTERS:
-|   d0 = length / result
-|   d1 = sum accumulator (16-bit)
-|   d2, d3 = temporary for loads
-|   a0 = row pointer (auto-increment)
+|
+| Parameters: 4(sp) = row pointer, 8(sp) = length in bytes
+| Returns:    d0.b = 8-bit folded checksum
+|
+| Processing: 16-byte chunks (8 words) + 0-15 byte remainder
 | ============================================================================
 
     .globl  _Atari_CalculateRowChecksum
 
 _Atari_CalculateRowChecksum:
-    | Preserve registers according to m68k ABI
-    movem.l d2-d3,-(sp)
+    movem.l d2-d6/a2,-(sp)
     
-    | Load parameters from stack
-    | Note: stack offsets adjusted for saved registers (8 bytes)
-    move.l  12(sp),a0           | a0 = row pointer
-    move.l  16(sp),d0           | d0 = length
+    move.l  32(sp),a0
+    move.l  36(sp),d2
+    move.l  d2,d0
+    moveq   #0,d1
     
-    | Initialize accumulator
-    moveq   #0,d1               | d1 = sum = 0
-    
-    | Fast path: Process 16 bytes at a time
-    | Each iteration handles 8 words (16 bytes)
-.loop_16:
-    sub.l   #16,d0              | len -= 16
-    blt.s   .remainder          | if (len < 16) goto remainder
-    
-    | UNROLLED LOOP: 8 word loads + adds
-    | On m68000: move.w (a0)+,dx = 8 cycles
-    |            add.w dx,d1     = 4 cycles
-    | Total: 8 × 12 = 96 cycles per 16 bytes
-    | Plus branch: 4 cycles = ~100 cycles total
-    
-    move.w  (a0)+,d2            | Load word 0-1
-    add.w   d2,d1               | sum += word
-    move.w  (a0)+,d2            | Load word 2-3
-    add.w   d2,d1
-    move.w  (a0)+,d2            | Load word 4-5
-    add.w   d2,d1
-    move.w  (a0)+,d2            | Load word 6-7
-    add.w   d2,d1
-    
-    move.w  (a0)+,d3            | Load word 8-9 (alternate register)
-    add.w   d3,d1
-    move.w  (a0)+,d3            | Load word 10-11
-    add.w   d3,d1
-    move.w  (a0)+,d3            | Load word 12-13
-    add.w   d3,d1
-    move.w  (a0)+,d3            | Load word 14-15
-    add.w   d3,d1
-    
-    bra.s   .loop_16            | Loop back (4 cycles)
+    lsr.l   #4,d2
+    beq     .Lgeneric_remainder
+    subq.l  #1,d2
 
-.remainder:
-    | Handle remaining bytes (0-15)
-    add.l   #16,d0              | Restore actual remainder count
-    beq.s   .fold               | if (remainder == 0) goto fold
+.Lgeneric_chunk_loop:
+    movem.w (a0)+,d3-d6
+    add.w   d3,d1
+    add.w   d4,d1
+    add.w   d5,d1
+    add.w   d6,d1
     
-.loop_2:
-    | Process 2 bytes at a time
-    subq.l  #2,d0               | len -= 2
-    blt.s   .final_byte         | if (len < 2) check for final byte
+    movem.w (a0)+,d3-d6
+    add.w   d3,d1
+    add.w   d4,d1
+    add.w   d5,d1
+    add.w   d6,d1
     
-    move.w  (a0)+,d2            | Load word
-    add.w   d2,d1               | sum += word
-    bra.s   .loop_2             | Continue (handles 2,4,6,8,10,12,14 remainder)
+    dbra    d2,.Lgeneric_chunk_loop
 
-.final_byte:
-    | Check if one byte remains (odd length)
-    addq.l  #2,d0               | Adjust: d0 = 0 (even) or 1 (odd)
-    beq.s   .fold               | if (no remainder) goto fold
-    
-    | Process final byte - shift to high byte to maintain weight
-    moveq   #0,d2               | Clear d2
-    move.b  (a0),d2             | Load final byte
-    lsl.w   #8,d2               | Shift to high byte
-    add.w   d2,d1               | sum += byte << 8
+.Lgeneric_remainder:
+    and.l   #15,d0
+    beq     .Lgeneric_fold
+    move.l  a0,a1
+    add.l   d0,a1
+    bra     .Lgeneric_rem_test
 
-.fold:
-    | Return full 16-bit checksum - no folding
-    move.w  d1,d0               | d0.w = checksum (return value)
+.Lgeneric_rem_loop:
+    move.b  (a0)+,d3
+    lsl.w   #8,d3
+    add.w   d3,d1
+
+.Lgeneric_rem_test:
+    cmp.l   a0,a1
+    bgt     .Lgeneric_rem_loop
+
+.Lgeneric_fold:
+    move.w  d1,d2
+    lsr.w   #8,d2
+    eor.w   d2,d1
+    move.b  d1,d0
     
-    | Restore registers and return
-    movem.l (sp)+,d2-d3
+    movem.l (sp)+,d2-d6/a2
     rts
 
+
 | ============================================================================
-| Atari_CalculateRowChecksum_320 - Optimized for 320-pixel rows
-| 
-| C prototype:
-|   Uint8 Atari_CalculateRowChecksum_320(const Uint8 *row);
-| 
-| INPUTS:
-|   4(sp)  = const Uint8 *row  - pointer to exactly 320 bytes
-| 
-| OUTPUT:
-|   d0.w   = 16-bit checksum
-| 
-| OPTIMIZATION:
-|   - Fully unrolled loop (no branch overhead)
-|   - Hardcoded for 320 bytes = 160 words = 20 iterations of 8 words
-|   - Uses 4 data registers to hide load latency
-|   - Zero loop overhead = maximum throughput
-| 
-| PERFORMANCE:
-|   - 320 bytes = 160 words × 12 cycles = ~1,920 cycles
-|   - But with pipelining and no branches: ~1,600 cycles
-|   - vs generic version: ~2,000 cycles
-|   - vs C version: ~640 cycles average (but varies by compiler)
-|   - Speedup: ~5x faster than typical C
+| Atari_CalculateRowChecksum_320
+| Optimized for ST low resolution (320 bytes per row)
+|
+| Structure: 5 outer iterations × 8 inner iterations × 8 bytes
+| Total: 5 × 8 × 8 = 320 bytes
 | ============================================================================
 
     .globl  _Atari_CalculateRowChecksum_320
 
 _Atari_CalculateRowChecksum_320:
-    | Save registers - use more for pipelining
-    movem.l d2-d5,-(sp)
+    movem.l d2-d7,-(sp)
     
-    | Load row pointer
-    move.l  20(sp),a0           | a0 = row (offset for 4 saved registers)
-    
-    | Initialize accumulator
-    moveq   #0,d1               | d1 = sum = 0
-    
-    | FULLY UNROLLED: 320 bytes = 20 iterations × 16 bytes
-    | Using .rept directive for code generation
-    | Each block: 8 words = 96 cycles
-    | Total: 20 × 96 = 1,920 cycles (no branch overhead!)
-    
-    | Manual unroll for first few iterations (example)
-    | In production, use .rept 20 or fully expand
-    
-    | Iteration 1 (bytes 0-15)
-    move.w  (a0)+,d2
-    add.w   d2,d1
-    move.w  (a0)+,d3
-    add.w   d3,d1
-    move.w  (a0)+,d4
+    move.l  28(sp),a0
+    moveq   #0,d1
+    moveq   #4,d2
+
+.L320_outer:
+    moveq   #7,d3
+
+.L320_inner:
+    movem.w (a0)+,d4-d7
     add.w   d4,d1
-    move.w  (a0)+,d5
     add.w   d5,d1
-    move.w  (a0)+,d2
-    add.w   d2,d1
-    move.w  (a0)+,d3
-    add.w   d3,d1
-    move.w  (a0)+,d4
-    add.w   d4,d1
-    move.w  (a0)+,d5
-    add.w   d5,d1
+    add.w   d6,d1
+    add.w   d7,d1
     
-    | Iterations 2-20 (bytes 16-319)
-    | Use .rept for automatic expansion
-    .rept 19
-        move.w  (a0)+,d2
-        add.w   d2,d1
-        move.w  (a0)+,d3
-        add.w   d3,d1
-        move.w  (a0)+,d4
-        add.w   d4,d1
-        move.w  (a0)+,d5
-        add.w   d5,d1
-        move.w  (a0)+,d2
-        add.w   d2,d1
-        move.w  (a0)+,d3
-        add.w   d3,d1
-        move.w  (a0)+,d4
-        add.w   d4,d1
-        move.w  (a0)+,d5
-        add.w   d5,d1
-    .endr
+    dbra    d3,.L320_inner
+    dbra    d2,.L320_outer
     
-    | Return full 16-bit checksum
-    move.w  d1,d0               | Return checksum
+    move.w  d1,d2
+    lsr.w   #8,d2
+    eor.w   d2,d1
+    move.b  d1,d0
     
-    movem.l (sp)+,d2-d5
+    movem.l (sp)+,d2-d7
     rts
 
 
 | ============================================================================
-| Atari_CalculateRowChecksumsBlock - Batch checksum calculation
-| 
+| Atari_CalculateRowChecksum_640
+| Optimized for TT/Falcon high resolution (640 bytes per row)
+|
+| Structure: 10 outer iterations × 8 inner iterations × 8 bytes
+| Total: 10 × 8 × 8 = 640 bytes
+| ============================================================================
+
+    .globl  _Atari_CalculateRowChecksum_640
+
+_Atari_CalculateRowChecksum_640:
+    movem.l d2-d7,-(sp)
+    
+    move.l  28(sp),a0
+    moveq   #0,d1
+    moveq   #9,d2
+
+.L640_outer:
+    moveq   #7,d3
+
+.L640_inner:
+    movem.w (a0)+,d4-d7
+    add.w   d4,d1
+    add.w   d5,d1
+    add.w   d6,d1
+    add.w   d7,d1
+    
+    dbra    d3,.L640_inner
+    dbra    d2,.L640_outer
+    
+    move.w  d1,d2
+    lsr.w   #8,d2
+    eor.w   d2,d1
+    move.b  d1,d0
+    
+    movem.l (sp)+,d2-d7
+    rts
+
+
+| ============================================================================
+| Atari_CalculateRowChecksumsBlock
+| Batch checksum calculation for multiple rows
+|
 | C prototype:
 |   void Atari_CalculateRowChecksumsBlock(
-|       const Uint8 *buffer,     // Source buffer
-|       Uint8 *checksums,        // Output checksum array
-|       int num_rows,            // Number of rows to process
-|       int pitch,               // Bytes per row (with padding)
-|       int bytes_per_row        // Actual bytes to checksum per row
-|   );
-| 
-| PURPOSE:
-|   Process multiple rows in one call to eliminate function call overhead
-|   Typical savings: 200 rows × 4 cycles/call = 800 cycles
-| 
-| PERFORMANCE:
-|   Same per-row performance as generic version
-|   Plus ~800 cycle savings for 200-row scan
-|   Total improvement: 5-10% for full screen scans
+|       const Uint8 *buffer, Uint8 *checksums,
+|       int num_rows, int pitch, int bytes_per_row);
+|
+| Parameters: 40(sp)=buffer, 44(sp)=checksums, 48(sp)=num_rows
+|             52(sp)=pitch, 56(sp)=bytes_per_row
+|
+| Processing: 8-byte chunks per row + 0-7 byte remainder
 | ============================================================================
 
     .globl  _Atari_CalculateRowChecksumsBlock
 
 _Atari_CalculateRowChecksumsBlock:
-    | Save registers (need more for nested loops)
-    movem.l d2-d7/a2-a3,-(sp)
+    movem.l d2-d7/a2-a4,-(sp)
     
-    | Load parameters (offset 32 for 8 saved regs)
-    move.l  36(sp),a0           | a0 = buffer
-    move.l  40(sp),a1           | a1 = checksums output array
-    move.l  44(sp),d7           | d7 = num_rows
-    move.l  48(sp),a2           | a2 = pitch
-    move.l  52(sp),d6           | d6 = bytes_per_row
+    move.l  40(sp),a0
+    move.l  44(sp),a1
+    move.l  48(sp),d6
+    move.l  52(sp),a3
+    move.l  56(sp),d5
     
-    | Setup loop counter
-    subq.l  #1,d7               | Adjust for dbra (counts from n-1 to 0)
-    bmi.s   .block_done         | if (num_rows <= 0) exit
+    subq.l  #1,d6
+    bmi     .Lblock_done
 
-.row_loop:
-    | Process one row - similar to generic checksum
-    moveq   #0,d1               | sum = 0
-    move.l  a0,a3               | a3 = current row pointer
-    move.l  d6,d5               | d5 = bytes remaining this row
-    
-    | Inner loop: 16 bytes at a time
-.row_loop_16:
-    sub.l   #16,d5
-    blt.s   .row_remainder
-    
-    | Process 16 bytes (same as generic version)
-    move.w  (a3)+,d2
-    add.w   d2,d1
-    move.w  (a3)+,d2
-    add.w   d2,d1
-    move.w  (a3)+,d2
-    add.w   d2,d1
-    move.w  (a3)+,d2
-    add.w   d2,d1
-    move.w  (a3)+,d3
-    add.w   d3,d1
-    move.w  (a3)+,d3
-    add.w   d3,d1
-    move.w  (a3)+,d3
-    add.w   d3,d1
-    move.w  (a3)+,d3
-    add.w   d3,d1
-    
-    bra.s   .row_loop_16
+.Lblock_row_loop:
+    move.l  a0,a2
+    moveq   #0,d1
+    move.l  d5,d4
+    lsr.l   #3,d4
+    beq     .Lblock_remainder
+    subq.l  #1,d4
 
-.row_remainder:
-    add.l   #16,d5              | Restore remainder
-    beq.s   .row_fold
-    
-.row_loop_2:
-    subq.l  #2,d5
-    blt.s   .row_final_byte
-    move.w  (a3)+,d2
+.Lblock_chunk_loop:
+    movem.w (a2)+,d2-d3         | first 4 bytes
     add.w   d2,d1
-    bra.s   .row_loop_2
+    add.w   d3,d1
+    movem.w (a2)+,d2-d3         | second 4 bytes
+    add.w   d2,d1
+    add.w   d3,d1
+    dbra    d4,.Lblock_chunk_loop
 
-.row_final_byte:
-    addq.l  #2,d5
-    beq.s   .row_fold
-    moveq   #0,d2
-    move.b  (a3),d2
+.Lblock_remainder:
+    move.l  d5,d7
+    and.l   #7,d7
+    beq     .Lblock_store
+    move.l  a2,a4
+    add.l   d7,a4
+    bra     .Lblock_rem_test
+
+.Lblock_rem_loop:
+    move.b  (a2)+,d2
     lsl.w   #8,d2
     add.w   d2,d1
 
-.row_fold:
-    | Fold to 8-bit
+.Lblock_rem_test:
+    cmp.l   a2,a4
+    bgt     .Lblock_rem_loop
+
+.Lblock_store:
     move.w  d1,d2
     lsr.w   #8,d2
     eor.w   d2,d1
+    move.b  d1,(a1)+
     
-    | Store checksum in output array
-    move.b  d1,(a1)+            | checksums[row] = checksum
-    
-    | Advance to next row
-    add.l   a2,a0               | buffer += pitch
-    
-    | Loop for next row
-    dbra    d7,.row_loop        | d7--, if (d7 >= 0) continue
+    add.l   a3,a0
+    dbra    d6,.Lblock_row_loop
 
-.block_done:
-    movem.l (sp)+,d2-d7/a2-a3
-    rts
-
-
-| ============================================================================
-| OPTIONAL: Fast comparison for early abort
-| Returns number of changed rows before threshold hit
-| ============================================================================
-
-    .globl  _Atari_CompareChecksumsEarlyAbort
-
-| int Atari_CompareChecksumsEarlyAbort(
-|     const Uint8 *buffer,      // Current buffer
-|     const Uint8 *old_sums,    // Old checksum array
-|     int num_rows,             // Rows to check
-|     int pitch,                // Buffer pitch
-|     int bytes_per_row,        // Bytes per row
-|     int abort_threshold       // Stop if changes > this
-| );
-| Returns: number of changed rows (or -1 if threshold exceeded)
-
-_Atari_CompareChecksumsEarlyAbort:
-    movem.l d2-d7/a2-a4,-(sp)
-    
-    move.l  40(sp),a0           | buffer
-    move.l  44(sp),a1           | old checksums
-    move.l  48(sp),d7           | num_rows
-    move.l  52(sp),a2           | pitch
-    move.l  56(sp),d6           | bytes_per_row
-    move.l  60(sp),d4           | abort_threshold
-    
-    moveq   #0,d0               | changed_count = 0
-    subq.l  #1,d7
-    bmi.s   .abort_done
-
-.abort_row_loop:
-    | Calculate checksum for current row (inline for speed)
-    moveq   #0,d1
-    move.l  a0,a3
-    move.l  d6,d5
-    
-    | Fast checksum (simplified - could use full version)
-.abort_sum_loop:
-    subq.l  #2,d5
-    blt.s   .abort_sum_done
-    move.w  (a3)+,d2
-    add.w   d2,d1
-    bra.s   .abort_sum_loop
-
-.abort_sum_done:
-    | Fold
-    move.w  d1,d2
-    lsr.w   #8,d2
-    eor.w   d2,d1
-    
-    | Compare with old checksum
-    move.b  (a1)+,d2            | old checksum
-    cmp.b   d2,d1               | new vs old
-    beq.s   .abort_no_change    | if equal, skip
-    
-    | Row changed
-    addq.l  #1,d0               | changed_count++
-    cmp.l   d4,d0               | compare with threshold
-    bgt.s   .abort_exceeded     | if (count > threshold) abort
-
-.abort_no_change:
-    add.l   a2,a0               | buffer += pitch
-    dbra    d7,.abort_row_loop
-
-.abort_done:
-    | Return changed_count
+.Lblock_done:
     movem.l (sp)+,d2-d7/a2-a4
     rts
-
-.abort_exceeded:
-    | Threshold exceeded - return -1
-    moveq   #-1,d0
-    movem.l (sp)+,d2-d7/a2-a4
-    rts
-
-
-| ============================================================================
-| END OF FILE
-| ============================================================================

@@ -577,109 +577,111 @@ _Atari_C2P_8to8_LUT_asm:
     .text
     .globl  _Atari_BlitFast_asm
 
+| ============================================================================
+| Atari_BlitFast_asm – Optimized memory copy for TrueColor modes
+|
+| C: void Atari_BlitFast_asm(void *dst, const void *src,
+|                            int row_bytes, int rows, int pitch);
+|
+| This version uses pointer increments to avoid per‑row multiplication,
+| yet correctly advances by 'pitch' after each row, not by row_bytes.
+| ============================================================================
+
+| ============================================================================
+| Atari_BlitFast_asm – Optimized memory copy for TrueColor modes
+|
+| C: void Atari_BlitFast_asm(void *dst, const void *src,
+|                            int row_bytes, int rows, int pitch);
+|
+| This version uses pointer increments to avoid per‑row multiplication,
+| yet correctly advances by 'pitch' after each row, not by row_bytes.
+| ============================================================================
+
 _Atari_BlitFast_asm:
     movem.l d2-d7/a2-a6,-(sp)       | Save registers (44 bytes)
     
-    | Load parameters from stack
     move.l  48(sp),a1               | a1 = dst_base
     move.l  52(sp),a2               | a2 = src_base  
     move.l  56(sp),d4               | d4 = row_bytes
     move.l  60(sp),d5               | d5 = rows
     move.l  64(sp),d6               | d6 = pitch
     
-    | Check if rows > 0
     tst.l   d5
     ble     .exit
     
-    moveq   #0,d7                   | d7 = row counter (0 to rows-1)
-    
+    | Initialize row pointers
+    move.l  a1,a3                   | a3 = dst row pointer
+    move.l  a2,a0                   | a0 = src row pointer
+    subq.l  #1,d5                   | dbra count
+
 .row_loop:
-    | Calculate offset = row * pitch
-    move.l  d7,d0                   | d0 = row
-    move.l  d6,d1                   | d1 = pitch
-    
-    | Simple 32-bit multiply using mulu.w twice
-    move.w  d0,d2                   | d2 = row (low word)
-    mulu.w  d1,d2                   | d2 = row_low * pitch_low
-    
-    swap    d0
-    move.w  d0,d3
-    mulu.w  d1,d3                   | d3 = row_high * pitch_low
-    swap    d3
-    clr.w   d3
-    add.l   d3,d2                   | d2 = full offset
-    
-    | Calculate pointers for this row
-    lea     (a2,d2.l),a0            | a0 = src_ptr = src_base + offset
-    lea     (a1,d2.l),a3            | a3 = dst_ptr = dst_base + offset
-    
-    | Check alignment (both must be aligned to 4 bytes)
-    move.l  a0,d0
-    move.l  a3,d1
-    or.l    d1,d0                   | Combine both addresses
-    and.l   #3,d0                   | Check if either has low 2 bits set
-    bne     .copy_bytes             | If either not aligned, use byte copy
-    
-    | Check if row_bytes >= 16
-    cmp.l   #16,d4
-    blt     .copy_bytes
-    
-    | Aligned copy with longwords
+    | Use temporary registers for the copy
+    move.l  a0,a4                   | a4 = src copy pointer
+    move.l  a3,a5                   | a5 = dst copy pointer
+
+    | Check alignment of a4 and a5 (both must be longword-aligned)
+    move.l  a4,d0
+    and.l   #3,d0
+    bne     .copy_bytes             | src misaligned
+    move.l  a5,d0
+    and.l   #3,d0
+    bne     .copy_bytes             | dst misaligned
+
+    | Aligned: copy longwords
     move.l  d4,d2
-    lsr.l   #2,d2                   | d2 = number of longs
+    lsr.l   #2,d2                   | d2 = number of longwords
     beq     .check_byte_remainder
-    
-    | Copy 4 longs at a time (unrolled)
+
+    | Copy 4 longwords at a time (unrolled)
     move.l  d2,d3
     lsr.l   #2,d3                   | d3 = longs / 4
     beq     .copy_remaining_longs
-    
+
     subq.l  #1,d3
 .copy_4longs:
-    move.l  (a0)+,(a3)+
-    move.l  (a0)+,(a3)+
-    move.l  (a0)+,(a3)+
-    move.l  (a0)+,(a3)+
+    move.l  (a4)+,(a5)+
+    move.l  (a4)+,(a5)+
+    move.l  (a4)+,(a5)+
+    move.l  (a4)+,(a5)+
     dbra    d3,.copy_4longs
-    
+
 .copy_remaining_longs:
     move.l  d2,d3
     and.l   #3,d3                   | d3 = longs % 4
     beq     .check_byte_remainder
-    
+
     subq.l  #1,d3
 .copy_1long:
-    move.l  (a0)+,(a3)+
+    move.l  (a4)+,(a5)+
     dbra    d3,.copy_1long
-    
+
 .check_byte_remainder:
     | Check for remaining bytes
     move.l  d4,d0
-    and.l   #3,d0                   | d0 = row_bytes % 4
+    and.l   #3,d0
     beq     .next_row
-    
+
     subq.l  #1,d0
 .copy_rem_bytes:
-    move.b  (a0)+,(a3)+
+    move.b  (a4)+,(a5)+
     dbra    d0,.copy_rem_bytes
-    
     bra     .next_row
-    
+
 .copy_bytes:
-    | Byte-by-byte copy
+    | Byte-by-byte copy (unaligned)
     move.l  d4,d0
     beq     .next_row
-    
     subq.l  #1,d0
 .byte_loop:
-    move.b  (a0)+,(a3)+
+    move.b  (a4)+,(a5)+
     dbra    d0,.byte_loop
-    
+
 .next_row:
-    addq.l  #1,d7                   | row++
-    cmp.l   d5,d7                   | row < rows?
-    blt     .row_loop
-    
+    | Advance to next row by pitch (not row_bytes)
+    add.l   d6,a0                   | src += pitch
+    add.l   d6,a3                   | dst += pitch
+    dbra    d5,.row_loop
+
 .exit:
     movem.l (sp)+,d2-d7/a2-a6
     rts

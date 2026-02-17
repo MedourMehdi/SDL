@@ -1,5 +1,6 @@
 /* ============================================
-   SDL_gemvideo.h - Step 1 Optimized (FIXED)
+   SDL_gemvideo.h
+
    m68000: Precompute at VideoInit
    C90 Compliant
    ============================================ */
@@ -68,14 +69,20 @@ typedef struct SDL_WindowData {
     int plane_line_bytes;          /* Bytes per plane per line */
     int total_line_bytes;          /* Bytes for all planes per line */
     int block_size;                /* Bytes per 16-pixel block */
+    
     #ifdef SDL_GEM_DIRTY_RECT
     /* === FAST CHANGE DETECTION (68000-optimized) === */
     /* One byte checksum per row. Aligned to 16 bytes for 68000 movem */
-    Uint16 *row_checksums;        /* Current frame checksums */
-    void *raw_checksum_buffer;   /* Original malloc ptr for free */
-    Uint16 last_frame_counter;   /* For periodic forced updates */
+    Uint8 *row_checksums;          /* Current frame checksums */
+    void *raw_checksum_buffer;     /* Original malloc ptr for free */
+    int checksum_height;           /* Height of allocated checksum buffer */
+    Uint16 last_frame_counter;     /* For periodic forced updates */
     SDL_Rect prev_dirty_rects[MAX_MERGED_RECTS];   /* rectangles updated in previous frame */
-    int      num_prev_dirty_rects;                 /* number of valid rects in prev_dirty_rects */    
+    int      num_prev_dirty_rects;                 /* number of valid rects in prev_dirty_rects */
+#ifdef SDL_GEM_DIRTY_RECT_ASM
+    Uint8 *batch_checksums;        /* Reusable temp buffer for batch calculation */
+    size_t batch_checksums_size;   /* Allocated size */
+#endif    
     #endif 
 } SDL_WindowData;
 
@@ -131,10 +138,15 @@ extern void Atari_C2P_Planar(void *src, void *dst, int width, int height,
 #endif
 
 #ifdef SDL_GEM_DIRTY_RECT_ASM
-extern Uint16 Atari_CalculateRowChecksum(const Uint8 *row, int len);
-extern Uint16 Atari_CalculateRowChecksum_320(const Uint8 *row);
+extern void Atari_CalculateRowChecksumsBlock(const Uint8 *buffer,
+    Uint8 *checksums, int num_rows, int pitch, int bytes_per_row);
+extern Uint8 Atari_CalculateRowChecksum(const Uint8 *row, int len);
+extern Uint8 Atari_CalculateRowChecksum_320(const Uint8 *row);
+extern Uint8 Atari_CalculateRowChecksum_640(const Uint8 *row);
 #define CALCULATE_ROW_CHECKSUM(r, l) \
     ((l) == 320 ? Atari_CalculateRowChecksum_320(r) : Atari_CalculateRowChecksum(r, l))
+#else
+#define CALCULATE_ROW_CHECKSUM(r, l) CalculateRowChecksum(r, l)
 #endif /* SDL_GEM_DIRTY_RECT_ASM */
 
 /* Globals - sdl_global_aes and gl_apid already declared in SDL_sysvideo.h */

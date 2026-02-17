@@ -10,8 +10,6 @@
 
 #ifdef SDL_VIDEO_DRIVER_GEM
 
-int16_t wdesk, hdesk;
-
 static int GEM_ShowMessageBox(const SDL_MessageBoxData *messageboxdata, int *buttonid);
 
 static void GEM_DeleteDevice(SDL_VideoDevice *device)
@@ -234,9 +232,6 @@ int GEM_VideoInit(SDL_VideoDevice *this)
     /* Get desktop dimensions */
     mt_wind_get_grect(DESK, WF_WORKXYWH, (GRECT *)&data->work_x, sdl_global_aes);
     mt_wind_get_grect(DESK, WF_CURRXYWH, (GRECT *)&data->desk_x, sdl_global_aes);
-    
-    wdesk = data->desk_w;
-    hdesk = data->desk_h;
     
     /* Open VDI workstation */
     data->vdi_handle = mt_graf_handle(NULL, NULL, NULL, NULL, sdl_global_aes);
