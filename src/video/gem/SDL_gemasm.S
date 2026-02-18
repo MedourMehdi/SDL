@@ -563,6 +563,196 @@ _Atari_C2P_8to8_LUT_asm:
     rts
 
 | ============================================================================
+| Atari_ConvertRGB332toRGB565_asm - 68000-optimized LUT converter
+| ============================================================================
+
+    .text
+    .globl  _Atari_ConvertRGB332toRGB565_asm
+
+_Atari_ConvertRGB332toRGB565_asm:
+    movem.l d2-d7/a2-a6,-(sp)
+
+    move.l  48(sp),a0
+    move.l  52(sp),a1
+    move.l  56(sp),d4
+    move.l  60(sp),d5
+    move.l  64(sp),d6
+    move.l  68(sp),d7
+
+    move.l  d6,a2
+    sub.l   d4,a2
+
+    move.l  d4,d0
+    lsl.l   #1,d0
+    move.l  d7,a3
+    sub.l   d0,a3
+
+    lea     _rgb332_to_rgb565_lut,a6
+
+    move.l  d4,d2
+    lsr.l   #2,d2
+    and.l   #3,d4
+
+    subq.l  #1,d5
+    bmi.s   .rgb565_exit
+
+.rgb565_row:
+    move.l  d2,d6
+    beq.s   .rgb565_rem_only
+
+    subq.l  #1,d6
+
+.rgb565_4px:
+    moveq   #0,d0
+    move.b  (a0)+,d0
+    add.w   d0,d0
+    move.w  (a6,d0.w),d1
+
+    moveq   #0,d0
+    move.b  (a0)+,d0
+    add.w   d0,d0
+    move.w  d1,(a1)+
+    move.w  (a6,d0.w),d1
+
+    moveq   #0,d0
+    move.b  (a0)+,d0
+    add.w   d0,d0
+    move.w  d1,(a1)+
+    move.w  (a6,d0.w),d1
+
+    moveq   #0,d0
+    move.b  (a0)+,d0
+    add.w   d0,d0
+    move.w  d1,(a1)+
+    move.w  (a6,d0.w),d1
+    move.w  d1,(a1)+
+
+    dbra    d6,.rgb565_4px
+
+.rgb565_rem_only:
+    move.l  d4,d6
+    beq.s   .rgb565_next
+    subq.l  #1,d6
+
+.rgb565_rem:
+    moveq   #0,d0
+    move.b  (a0)+,d0
+    add.w   d0,d0               | d0 = index * 2
+    move.w  (a6,d0.w),(a1)+
+    dbra    d6,.rgb565_rem
+
+.rgb565_next:
+    add.l   a2,a0
+    add.l   a3,a1
+
+    dbra    d5,.rgb565_row
+
+.rgb565_exit:
+    movem.l (sp)+,d2-d7/a2-a6
+    rts
+
+| ============================================================================
+| Atari_ConvertRGB332toARGB8888_asm - 68000-optimized LUT converter
+|
+| C: void Atari_ConvertRGB332toARGB8888_asm(const Uint8 *src, Uint32 *dst,
+|                                           int width, int height,
+|                                           int src_pitch, int dst_pitch)
+|
+| Output: 4 bytes per pixel (AA RR GG BB), alpha = 0xFF
+| LUT: 256 entries, 4 bytes each (0xFFRRGGBB), indexed by byte value * 4
+| ============================================================================
+
+    .text
+    .globl  _Atari_ConvertRGB332toARGB8888_asm
+
+_Atari_ConvertRGB332toARGB8888_asm:
+    movem.l d2-d7/a2-a6,-(sp)
+
+    move.l  48(sp),a0               | a0 = src
+    move.l  52(sp),a1               | a1 = dst
+    move.l  56(sp),d4               | d4 = width (preserved for remainder)
+    move.l  60(sp),d5               | d5 = height
+    move.l  64(sp),d6               | d6 = src_pitch
+    move.l  68(sp),d7               | d7 = dst_pitch
+
+    | Precompute skips
+    move.l  d6,a2
+    sub.l   d4,a2                   | a2 = src_skip
+
+    move.l  d4,d0
+    lsl.l   #2,d0                   | d0 = width * 4
+    move.l  d7,a3
+    sub.l   d0,a3                   | a3 = dst_skip
+
+    lea     _rgb332_to_argb8888_lut,a6
+
+    | Split: d2 = width/4, d4 = width%4
+    move.l  d4,d2
+    lsr.l   #2,d2                   | d2 = width / 4 (PRESERVED - don't clobber)
+    and.l   #3,d4                   | d4 = width % 4 (PRESERVED)
+
+    subq.l  #1,d5
+    bmi.s   .argb_exit
+
+.argb_row:
+    move.l  d2,d6                   | d6 = blocks for this row
+    beq.s   .argb_rem_only
+    subq.l  #1,d6
+
+.argb_4px:
+    | Pixel 0
+    moveq   #0,d0
+    move.b  (a0)+,d0
+    lsl.l   #2,d0                   | index * 4
+    move.l  (a6,d0.l),d1            | d1 = pixel 0 (use d1, not d2!)
+
+    | Pixel 1
+    moveq   #0,d0
+    move.b  (a0)+,d0
+    lsl.l   #2,d0
+    move.l  (a6,d0.l),d3            | d3 = pixel 1 (use d3, not d2!)
+    move.l  d1,(a1)+                | store pixel 0
+
+    | Pixel 2
+    moveq   #0,d0
+    move.b  (a0)+,d0
+    lsl.l   #2,d0
+    move.l  (a6,d0.l),d1            | d1 = pixel 2 (reuse d1)
+    move.l  d3,(a1)+                | store pixel 1
+
+    | Pixel 3
+    moveq   #0,d0
+    move.b  (a0)+,d0
+    lsl.l   #2,d0
+    move.l  (a6,d0.l),d3            | d3 = pixel 3 (reuse d3)
+    move.l  d1,(a1)+                | store pixel 2
+    move.l  d3,(a1)+                | store pixel 3
+
+    dbra    d6,.argb_4px
+
+.argb_rem_only:
+    move.l  d4,d6
+    beq.s   .argb_next
+    subq.l  #1,d6
+
+.argb_rem:
+    moveq   #0,d0
+    move.b  (a0)+,d0
+    lsl.l   #2,d0
+    move.l  (a6,d0.l),(a1)+
+    dbra    d6,.argb_rem
+
+.argb_next:
+    add.l   a2,a0
+    add.l   a3,a1
+
+    dbra    d5,.argb_row
+
+.argb_exit:
+    movem.l (sp)+,d2-d7/a2-a6
+    rts
+
+| ============================================================================
 | Atari_BlitFast_asm - Direct translation of C version
 | void Atari_BlitFast_asm(void *dst, const void *src, int row_bytes, int rows, int pitch)
 |
@@ -576,16 +766,6 @@ _Atari_C2P_8to8_LUT_asm:
 
     .text
     .globl  _Atari_BlitFast_asm
-
-| ============================================================================
-| Atari_BlitFast_asm – Optimized memory copy for TrueColor modes
-|
-| C: void Atari_BlitFast_asm(void *dst, const void *src,
-|                            int row_bytes, int rows, int pitch);
-|
-| This version uses pointer increments to avoid per‑row multiplication,
-| yet correctly advances by 'pitch' after each row, not by row_bytes.
-| ============================================================================
 
 | ============================================================================
 | Atari_BlitFast_asm – Optimized memory copy for TrueColor modes

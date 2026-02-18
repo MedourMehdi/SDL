@@ -122,7 +122,30 @@ extern void GEM_QuitEvents(SDL_VideoDevice *this);
 extern void Atari_C2P_Planar(void *src, void *dst, int width, int height,
                              int src_pitch, int dst_pitch, int planes);
 
+/* RGB332 -> TrueColor LUT converters (SDL_gemc2p.c) */
+extern void Atari_ConvertRGB332toRGB565(const Uint8 *src, Uint16 *dst,
+                                        int width, int height,
+                                        int src_pitch, int dst_pitch);
+extern void Atari_ConvertRGB332toRGB888(const Uint8 *src, Uint8 *dst,
+                                        int width, int height,
+                                        int src_pitch, int dst_pitch);
+extern void Atari_ConvertRGB332toARGB8888(const Uint8 *src, Uint32 *dst,
+                                          int width, int height,
+                                          int src_pitch, int dst_pitch);
+
+extern Uint16 rgb332_to_rgb565_lut[256];
+extern Uint32 rgb332_to_rgb888_lut[256];
+extern Uint32 rgb332_to_argb8888_lut[256];
+
 #ifdef SDL_GEM_C2P_ASM
+
+    extern void Atari_ConvertRGB332toRGB565_asm(const Uint8 *src, Uint16 *dst,
+                                            int width, int height,
+                                            int src_pitch, int dst_pitch);
+                                            
+    extern void Atari_ConvertRGB332toARGB8888_asm(const Uint8 *src, Uint32 *dst,
+                                             int width, int height,
+                                             int src_pitch, int dst_pitch);
 
    extern void Atari_BlitFast_asm(void*, const void*, int, int, int);
     #define BlitFast(a, b, c, d, e) Atari_BlitFast_asm(a, b, c, d, e)
