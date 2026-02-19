@@ -216,7 +216,7 @@ static int DetectChangesAndBuildRect(SDL_WindowData *data,
     if (numrects > 4) {
         SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
                      "GEM: Too many rects (%d), skipping checksum scan", numrects);
-        return 0;
+        return 2;
     }
 
     /* Check for full-screen update */
@@ -229,7 +229,7 @@ static int DetectChangesAndBuildRect(SDL_WindowData *data,
     else {
         SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
                      "GEM: Partial update (%d rects), using provided rects", numrects);
-        return 0;
+        return 2;
     }
     
     /* Initialize scan variables */
@@ -817,7 +817,14 @@ int GEM_UpdateWindowFramebuffer(SDL_VideoDevice *this, SDL_Window *window,
     if (!data || !data->buffer || !data->final_buffer) {
         return SDL_SetError("Framebuffer not initialised");
     }
-
+    /* Pitch not initialised — GEM_CreateWindowFramebuffer was not called yet */
+    if (data->buffer_pitch == 0) {
+        int pitch;
+        size_t chunky_size, planar_size;
+        CalculateBufferSizes(video, data->work_w, data->work_h,
+                             &pitch, &chunky_size, &planar_size, data);
+        data->buffer_pitch = (unsigned short)pitch;
+    }
 #ifdef SDL_GEM_DIRTY_RECT
     /* Detect changes */
     change_detect_result = DetectChangesAndBuildRect(data, rects, numrects,
@@ -836,6 +843,11 @@ int GEM_UpdateWindowFramebuffer(SDL_VideoDevice *this, SDL_Window *window,
         rects_to_process = &optimized_rect;
         num_to_process = 1;
     }
+    else if (change_detect_result == 2) {
+        rects_to_process = rects;
+        num_to_process = numrects;
+        use_full_update = 0;
+    }    
     else {
         rects_to_process = rects;
         num_to_process = numrects;

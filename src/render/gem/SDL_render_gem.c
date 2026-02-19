@@ -1166,8 +1166,8 @@ SDL_RenderDriver GEM_RenderDriver = {
             SDL_PIXELFORMAT_RGB888,
             SDL_PIXELFORMAT_ARGB8888
         },
-        1024,
-        1024
+        4096,
+        4096
     }
 };
 
