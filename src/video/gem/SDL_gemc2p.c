@@ -6,7 +6,9 @@
     extern void Atari_C2P_8to2_asm(void*, void*, int, int, int, int);
     extern void Atari_C2P_8to4_asm(void*, void*, int, int, int, int);
     extern void Atari_C2P_8to8_asm(void*, void*, int, int, int, int);
-
+    extern void Atari_ConvertBGRA8888toRGB332_asm(const Uint8 *src, Uint8 *dst,
+                                                  int width, int height,
+                                                  int src_pitch, int dst_pitch);
     /* Combined LUT + C2P routines */
     extern void Atari_C2P_8to1_LUT_asm(void*, void*, int, int, int, int, Uint8*);
     extern void Atari_C2P_8to2_LUT_asm(void*, void*, int, int, int, int, Uint8*);
@@ -111,6 +113,16 @@ static void Atari_InitRGB332toTrueColorLUTs(void)
         Atari_ConvertRGB332toARGB8888_asm(src, dst, width, height,
                                         src_pitch, dst_pitch);
     }
+
+    void Atari_ConvertBGRA8888toRGB332(const Uint8 *src, Uint8 *dst,
+                                    int width, int height,
+                                    int src_pitch, int dst_pitch)
+    {
+        if (!src || !dst || width <= 0 || height <= 0) return;
+        
+        Atari_ConvertBGRA8888toRGB332_asm(src, dst, width, height,
+                                        src_pitch, dst_pitch);
+    }
 #else
 /* RGB332 -> RGB565 (16bpp) - 2 bytes per pixel, aligned writes */
 void Atari_ConvertRGB332toRGB565(const Uint8 *src, Uint16 *dst, 
@@ -180,6 +192,31 @@ void Atari_ConvertRGB332toARGB8888(const Uint8 *src, Uint32 *dst,
         }
     }
 }
+
+void Atari_ConvertBGRA8888toRGB332(const Uint8 *src, Uint8 *dst,
+                                   int width, int height,
+                                   int src_pitch, int dst_pitch)
+{
+    int y, x;
+    const int src_skip = src_pitch - (width * 4);
+    const int dst_skip = dst_pitch - width;
+
+    if (!src || !dst || width <= 0 || height <= 0) return;
+
+    for (y = 0; y < height; y++) {
+        for (x = 0; x < width; x++) {
+            /* [B][G][R][A] in memory */
+            Uint8 b = src[0];
+            Uint8 g = src[1];
+            Uint8 r = src[2];
+            /* src[3] = A, ignored */
+            *dst++ = ((r >> 5) << 5) | ((g >> 5) << 2) | (b >> 6);
+            src += 4;
+        }
+        src += src_skip;
+        dst += dst_skip;
+    }
+}
 #endif /* SDL_GEM_C2P_ASM */
 
 /* RGB332 -> RGB888 (24bpp) - 3 bytes per pixel, packed */
@@ -246,7 +283,6 @@ void Atari_ConvertRGB332toABGR8888(const Uint8 *src, Uint32 *dst,
         }
     }
 }
-
 
 /* ====================================================================
    FILE: SDL_gemc2p_optimized.c

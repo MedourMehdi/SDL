@@ -237,7 +237,7 @@ static void GEM_MergeDirtyRects(GEM_RenderData *data)
     SDL_bool merged;
     int iterations = 0;
 
-    if (data->num_dirty_rects <= 1) return;
+    // if (data->num_dirty_rects <= 1) return; -- No need to check, the loop will handle it and exit immediately if 0 or 1 rects
 
     do {
         merged = SDL_FALSE;
@@ -598,7 +598,10 @@ static int GEM_RunCommandQueue(SDL_Renderer *renderer, SDL_RenderCommand *cmd,
         cmd = cmd->next;
     }
 
-    GEM_MergeDirtyRects(data);
+    if (data->num_dirty_rects > 1) {
+        GEM_MergeDirtyRects(data);
+    }
+
     return 0;
 }
 
@@ -654,11 +657,12 @@ static int GEM_CreateRenderer(SDL_Renderer *renderer, SDL_Window *window, Uint32
     if (data->vsync_enabled) {
         renderer->info.flags |= SDL_RENDERER_PRESENTVSYNC;
     }
-    renderer->info.num_texture_formats    = 4;
+    renderer->info.num_texture_formats    = 5;
     renderer->info.texture_formats[0]     = SDL_PIXELFORMAT_RGB332;
     renderer->info.texture_formats[1]     = SDL_PIXELFORMAT_RGB565;
     renderer->info.texture_formats[2]     = SDL_PIXELFORMAT_RGB888;
     renderer->info.texture_formats[3]     = SDL_PIXELFORMAT_ARGB8888;
+    renderer->info.texture_formats[4]     = SDL_PIXELFORMAT_BGRA8888;
     renderer->info.max_texture_width      = 4096;
     renderer->info.max_texture_height     = 4096;
 
@@ -692,7 +696,9 @@ static int GEM_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture)
      * hits the fast memcpy path instead of SDL_BlitScaled. */
     if (GEM_AcquireWindowSurface(renderdata)) {
         win_surf = renderdata->window_surface;
-        if (win_surf && win_surf->format->format != texture->format) {
+        if (win_surf &&
+            texture->format == SDL_PIXELFORMAT_RGB332 &&
+            win_surf->format->format != SDL_PIXELFORMAT_RGB332) {
             surface_format = win_surf->format->format;
         }
     }
@@ -714,7 +720,8 @@ static int GEM_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture)
     /* Allocate a lock buffer only when conversion is needed.
      * Sized for the full texture so any partial lock fits without realloc. */
     if (data->src_format != surface_format) {
-        data->lock_buffer = SDL_malloc((size_t)texture->w * texture->h);
+        data->lock_buffer = SDL_malloc((size_t)texture->w * texture->h
+                            * SDL_BYTESPERPIXEL(data->src_format));
         if (!data->lock_buffer) {
             SDL_FreeSurface(data->surface);
             SDL_free(data);
@@ -745,7 +752,11 @@ static int GEM_UpdateTexture(SDL_Renderer *renderer, SDL_Texture *texture,
     GEM_TextureData *data = (GEM_TextureData *)texture->driverdata;
     SDL_Surface *surface  = data->surface;
     int converted = 0;
-    (void)renderer;
+    /* Pre-calculate common pointers for fast paths */
+    const Uint8 *src = (const Uint8 *)pixels;
+    Uint8 *dst_base = (Uint8 *)surface->pixels + 
+                      (rect->y * surface->pitch) + 
+                      (rect->x * surface->format->BytesPerPixel);
 
     if (SDL_MUSTLOCK(surface)) {
         if (SDL_LockSurface(surface) < 0) {
@@ -753,43 +764,30 @@ static int GEM_UpdateTexture(SDL_Renderer *renderer, SDL_Texture *texture,
         }
     }
 
-    /* Fast path: RGB332 -> TrueColor using precomputed LUTs.
-     * pixels is already rect-relative per SDL contract. */
-    if (data->src_format == SDL_PIXELFORMAT_RGB332 &&
-        surface->format->format != SDL_PIXELFORMAT_RGB332) {
-
-        const Uint8 *src = (const Uint8 *)pixels;
-
+    /* Fast path: BGRA8888 -> RGB332 */
+    if (data->src_format == SDL_PIXELFORMAT_BGRA8888 &&
+        surface->format->format == SDL_PIXELFORMAT_RGB332) {
+        
+        Atari_ConvertBGRA8888toRGB332(src, dst_base, rect->w, rect->h,
+                                      pitch, surface->pitch);
+        converted = 1;
+    }
+    /* Fast path: RGB332 -> TrueColor using precomputed LUTs. */
+    else if (data->src_format == SDL_PIXELFORMAT_RGB332 &&
+             surface->format->format != SDL_PIXELFORMAT_RGB332) {
+        
         switch (surface->format->format) {
-            case SDL_PIXELFORMAT_RGB565: {
-                Uint16 *dst = (Uint16 *)((Uint8 *)surface->pixels +
-                                          rect->y * surface->pitch +
-                                          rect->x * surface->format->BytesPerPixel);
-                Atari_ConvertRGB332toRGB565(src, dst, rect->w, rect->h,
-                                           pitch, surface->pitch);
+            case SDL_PIXELFORMAT_RGB565:
+                Atari_ConvertRGB332toRGB565(src, (Uint16 *)dst_base, rect->w, rect->h, pitch, surface->pitch);
                 converted = 1;
                 break;
-            }
-            case SDL_PIXELFORMAT_RGB888: {
-                Uint8 *dst = (Uint8 *)surface->pixels +
-                             rect->y * surface->pitch +
-                             rect->x * surface->format->BytesPerPixel;
-                Atari_ConvertRGB332toRGB888(src, dst, rect->w, rect->h,
-                                           pitch, surface->pitch);
+            case SDL_PIXELFORMAT_RGB888:
+                Atari_ConvertRGB332toRGB888(src, dst_base, rect->w, rect->h, pitch, surface->pitch);
                 converted = 1;
                 break;
-            }
-            case SDL_PIXELFORMAT_ARGB8888: {
-                Uint32 *dst = (Uint32 *)((Uint8 *)surface->pixels +
-                                          rect->y * surface->pitch +
-                                          rect->x * surface->format->BytesPerPixel);
-                Atari_ConvertRGB332toARGB8888(src, dst, rect->w, rect->h,
-                                             pitch, surface->pitch);
+            case SDL_PIXELFORMAT_ARGB8888:
+                Atari_ConvertRGB332toARGB8888(src, (Uint32 *)dst_base, rect->w, rect->h, pitch, surface->pitch);
                 converted = 1;
-                break;
-            }
-            default:
-                /* Unknown TrueColor format - fall through to memcpy */
                 break;
         }
     }
@@ -854,7 +852,7 @@ static int GEM_LockTexture(SDL_Renderer *renderer, SDL_Texture *texture,
         }
 
         *pixels = data->lock_buffer;
-        *pitch  = data->lock_rect.w; /* RGB332: 1 byte/pixel, pitch = width */
+        *pitch  = data->lock_rect.w * SDL_BYTESPERPIXEL(data->src_format); /* RGB332: 1 byte/pixel, pitch = width */
         return 0;
     }
 
@@ -895,48 +893,52 @@ static void GEM_UnlockTexture(SDL_Renderer *renderer, SDL_Texture *texture)
 
     {
         const Uint8 *src = (const Uint8 *)data->lock_buffer;
+        Uint8 *dst_base = (Uint8 *)surface->pixels +
+                            data->lock_rect.y * surface->pitch +
+                            data->lock_rect.x * surface->format->BytesPerPixel;
+        int src_pitch   = data->lock_rect.w * SDL_BYTESPERPIXEL(data->src_format);
 
         if (SDL_MUSTLOCK(surface)) {
             if (SDL_LockSurface(surface) < 0) return;
         }
 
-        switch (surface->format->format) {
-            case SDL_PIXELFORMAT_RGB565: {
-                Uint16 *dst = (Uint16 *)((Uint8 *)surface->pixels +
-                                          data->lock_rect.y * surface->pitch +
-                                          data->lock_rect.x * surface->format->BytesPerPixel);
-                Atari_ConvertRGB332toRGB565(src, dst,
-                                           data->lock_rect.w, data->lock_rect.h,
-                                           data->lock_rect.w, surface->pitch);
-                break;
+        if (data->src_format == SDL_PIXELFORMAT_BGRA8888) {
+            switch (surface->format->format) {
+                case SDL_PIXELFORMAT_RGB332:
+                    Atari_ConvertBGRA8888toRGB332(src, dst_base,
+                                                    data->lock_rect.w, data->lock_rect.h,
+                                                    src_pitch, surface->pitch);
+                    break;
+                default:
+                    SDL_LogWarn(SDL_LOG_CATEGORY_RENDER,
+                                "GEM: UnlockTexture: BGRA8888->0x%X not supported",
+                                (unsigned)surface->format->format);
+                    break;
             }
-            case SDL_PIXELFORMAT_RGB888: {
-                Uint8 *dst = (Uint8 *)surface->pixels +
-                             data->lock_rect.y * surface->pitch +
-                             data->lock_rect.x * surface->format->BytesPerPixel;
-                Atari_ConvertRGB332toRGB888(src, dst,
-                                           data->lock_rect.w, data->lock_rect.h,
-                                           data->lock_rect.w, surface->pitch);
-                break;
+        } else if (data->src_format == SDL_PIXELFORMAT_RGB332) {
+            switch (surface->format->format) {
+                case SDL_PIXELFORMAT_RGB565:
+                    Atari_ConvertRGB332toRGB565(src, (Uint16 *)dst_base,
+                                                data->lock_rect.w, data->lock_rect.h,
+                                                src_pitch, surface->pitch);
+                    break;
+                case SDL_PIXELFORMAT_RGB888:
+                    Atari_ConvertRGB332toRGB888(src, dst_base,
+                                                data->lock_rect.w, data->lock_rect.h,
+                                                src_pitch, surface->pitch);
+                    break;
+                case SDL_PIXELFORMAT_ARGB8888:
+                    Atari_ConvertRGB332toARGB8888(src, (Uint32 *)dst_base,
+                                                    data->lock_rect.w, data->lock_rect.h,
+                                                    src_pitch, surface->pitch);
+                    break;
+                default:
+                    SDL_LogWarn(SDL_LOG_CATEGORY_RENDER,
+                                "GEM: UnlockTexture: unknown surface format 0x%X - "
+                                "frame will be corrupt",
+                                (unsigned)surface->format->format);
+                    break;
             }
-            case SDL_PIXELFORMAT_ARGB8888: {
-                Uint32 *dst = (Uint32 *)((Uint8 *)surface->pixels +
-                                          data->lock_rect.y * surface->pitch +
-                                          data->lock_rect.x * surface->format->BytesPerPixel);
-                Atari_ConvertRGB332toARGB8888(src, dst,
-                                             data->lock_rect.w, data->lock_rect.h,
-                                             data->lock_rect.w, surface->pitch);
-                break;
-            }
-            default:
-                /* Should not be reached: we only store surfaces in formats
-                 * we know how to convert. If we land here something went wrong
-                 * at CreateTexture time. */
-                SDL_LogWarn(SDL_LOG_CATEGORY_RENDER,
-                            "GEM: UnlockTexture: unknown surface format 0x%X - "
-                            "frame will be corrupt",
-                            (unsigned)surface->format->format);
-                break;
         }
 
         if (SDL_MUSTLOCK(surface)) {
@@ -1159,12 +1161,13 @@ SDL_RenderDriver GEM_RenderDriver = {
     {
         "gem",
         SDL_RENDERER_SOFTWARE,
-        4,
+        5,
         {
             SDL_PIXELFORMAT_RGB332,
             SDL_PIXELFORMAT_RGB565,
             SDL_PIXELFORMAT_RGB888,
-            SDL_PIXELFORMAT_ARGB8888
+            SDL_PIXELFORMAT_ARGB8888,
+            SDL_PIXELFORMAT_BGRA8888
         },
         4096,
         4096

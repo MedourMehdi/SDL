@@ -82,7 +82,7 @@ typedef struct SDL_WindowData {
 #ifdef SDL_GEM_DIRTY_RECT_ASM
     Uint8 *batch_checksums;        /* Reusable temp buffer for batch calculation */
     size_t batch_checksums_size;   /* Allocated size */
-#endif    
+#endif
     #endif 
 } SDL_WindowData;
 
@@ -133,6 +133,11 @@ extern void Atari_ConvertRGB332toARGB8888(const Uint8 *src, Uint32 *dst,
                                           int width, int height,
                                           int src_pitch, int dst_pitch);
 
+/* BGRA8888 -> RGB332 converter (big-endian Atari: memory is [B][G][R][A]) */
+extern void Atari_ConvertBGRA8888toRGB332(const Uint8 *src, Uint8 *dst,
+                                          int width, int height,
+                                          int src_pitch, int dst_pitch);
+
 extern Uint16 rgb332_to_rgb565_lut[256];
 extern Uint32 rgb332_to_rgb888_lut[256];
 extern Uint32 rgb332_to_argb8888_lut[256];
@@ -142,7 +147,7 @@ extern Uint32 rgb332_to_argb8888_lut[256];
     extern void Atari_ConvertRGB332toRGB565_asm(const Uint8 *src, Uint16 *dst,
                                             int width, int height,
                                             int src_pitch, int dst_pitch);
-                                            
+
     extern void Atari_ConvertRGB332toARGB8888_asm(const Uint8 *src, Uint32 *dst,
                                              int width, int height,
                                              int src_pitch, int dst_pitch);

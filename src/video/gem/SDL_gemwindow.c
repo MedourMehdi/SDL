@@ -315,7 +315,7 @@ static int UnionRectLists(const SDL_Rect *list1, int n1,
                           SDL_Rect *out, int max_out)
 {
     int total, merged;
-    SDL_Rect temp[MAX_MERGED_RECTS * 2];
+    static SDL_Rect temp[MAX_MERGED_RECTS * 2];
     
     total = n1 + n2;
     
