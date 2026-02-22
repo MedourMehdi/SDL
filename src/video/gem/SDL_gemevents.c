@@ -365,10 +365,12 @@ static int HandleMessage(_THIS, const short *msg)
         case WM_TOPPED:
             mt_wind_set(msg[3], WF_TOP, 0, 0, 0, 0, sdl_global_aes);
             SDL_SendWindowEvent(window, SDL_WINDOWEVENT_FOCUS_GAINED, 0, 0);
+            SDL_SetKeyboardFocus(window);
             break;
 
         case WM_UNTOPPED:
             SDL_SendWindowEvent(window, SDL_WINDOWEVENT_FOCUS_LOST, 0, 0);
+            SDL_SetKeyboardFocus(NULL);
             break;
 
         case WM_REDRAW: {
@@ -502,6 +504,19 @@ void GEM_PumpEvents(_THIS)
         &mx, &my, &new_mb, &kstate, &key_state_word, &mc,
         sdl_global_aes);
 
+    /*
+     * Per-frame work — runs every cycle regardless of GEM events.
+     *
+     * AgeGameKeys:        detect key release via timeout (game keys).
+     * HandleModifiers:    poll Kbshift() for Shift/Ctrl/Alt state.
+     * SDL_JoystickUpdate: read Xbios_joystick and fire hat/button events.
+     *                     The XBIOS vector writes it asynchronously at
+     *                     interrupt level; this turns it into SDL events.
+     */
+    AgeGameKeys();
+    HandleModifiers();
+    SDL_JoystickUpdate();
+
     if (!gem_events) {
         return;
     }
@@ -511,11 +526,6 @@ void GEM_PumpEvents(_THIS)
     if (gem_events & MU_KEYBD) {
         HandleKeyboard(key_state_word);
     }
-
-    /* Age game keys every cycle - the only way to detect their release */
-    AgeGameKeys();
-
-    HandleModifiers();
 
     if (gem_events & MU_MESAG) {
         HandleMessage(_this, msg);

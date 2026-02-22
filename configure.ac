@@ -3795,13 +3795,12 @@ case "$host" in
                     have_audio=yes
                     SUMMARY_audio="${SUMMARY_audio} atari"
                 fi
-
-                dnl Setup input drivers
-                AC_DEFINE(SDL_INPUT_ATARI, 1, [ ])
-                # SDLMAIN_SOURCES="$srcdir/src/main/gem/*.c"
-                SOURCES="$SOURCES $srcdir/src/joystick/atari/*.c"
-                have_input=yes
-                SUMMARY_input="${SUMMARY_input} atari"
+                if test x$enable_joystick = xyes; then
+                    AC_DEFINE(SDL_JOYSTICK_ATARI, 1, [ ])
+                    SOURCES="$SOURCES $srcdir/src/joystick/atari/*.c"
+                    SOURCES="$SOURCES $srcdir/src/joystick/atari/*.S"
+                    have_joystick=yes
+                fi
 
                 dnl Setup video drivers
                 if test x$enable_video = xyes; then

@@ -1025,6 +1025,9 @@ int GEM_CreateWindow(SDL_VideoDevice *this, SDL_Window *window)
                  data->win_w, data->win_h, sdl_global_aes);
     
     window->driverdata = data;
+
+    SDL_SetKeyboardFocus(window);
+    
     return 0;
 }
 

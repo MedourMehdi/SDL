@@ -312,6 +312,7 @@
 #undef SDL_AUDIO_DRIVER_WASAPI
 #undef SDL_AUDIO_DRIVER_WINMM
 #undef SDL_AUDIO_DRIVER_OS2
+#undef SDL_AUDIO_DRIVER_ATARI
 
 /* Enable various input drivers */
 #undef SDL_INPUT_LINUXEV
@@ -326,6 +327,7 @@
 #undef SDL_JOYSTICK_IOKIT
 #undef SDL_JOYSTICK_MFI
 #undef SDL_JOYSTICK_LINUX
+#undef SDL_JOYSTICK_ATARI
 #undef SDL_JOYSTICK_ANDROID
 #undef SDL_JOYSTICK_OS2
 #undef SDL_JOYSTICK_USBHID
@@ -444,7 +446,6 @@
 #undef SDL_VIDEO_METAL
 
 #undef SDL_VIDEO_DRIVER_GEM
-#undef SDL_INPUT_ATARI
 #undef SDL_TIMER_ATARI
 
 /* Enable system power support */

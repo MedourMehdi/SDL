@@ -94,6 +94,9 @@ static SDL_JoystickDriver *SDL_joystick_drivers[] = {
 #ifdef SDL_JOYSTICK_PS2
     &SDL_PS2_JoystickDriver,
 #endif
+#ifdef SDL_JOYSTICK_ATARI
+    &SDL_ATARI_JoystickDriver,
+#endif
 #ifdef SDL_JOYSTICK_PSP
     &SDL_PSP_JoystickDriver,
 #endif
