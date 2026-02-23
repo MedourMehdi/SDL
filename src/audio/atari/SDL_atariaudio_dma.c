@@ -1,8 +1,46 @@
-/* 
- * SDL_atariaudio.c - Drop-Free Hybrid Polling
- * 
- * N.B. DMA distance check prevents underrun
- */
+/*
+  Simple DirectMedia Layer
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
+
+  This software is provided 'as-is', without any express or implied
+  warranty.  In no event will the authors be held liable for any damages
+  arising from the use of this software.
+
+  Permission is granted to anyone to use this software for any purpose,
+  including commercial applications, and to alter it and redistribute it
+  freely, subject to the following restrictions:
+
+  1. The origin of this software must not be misrepresented; you must not
+     claim that you wrote the original software. If you use this software
+     in a product, an acknowledgment in the product documentation would be
+     appreciated but is not required.
+  2. Altered source versions must be plainly marked as such, and must not be
+     misrepresented as being the original software.
+  3. This notice may not be removed or altered from any source distribution.
+*/
+
+/* ============================================================================
+   SDL_atariaudio_dma.c – Atari Falcon XBIOS DMA audio driver for SDL2
+   Medour Mehdi - 2026
+   Architecture: Motorola 68000 / Atari ST-TT-Falcon
+
+   Drop-free circular buffer polling driver using Falcon DMA audio hardware.
+   No interrupt handler — the main thread polls the DMA position register
+   directly and yields via pthread_yield() when too close to the playhead.
+
+   Buffer strategy:
+     - 10-chunk circular buffer allocated in ST-RAM (Mxalloc)
+     - Fill pointer advances one chunk per callback
+     - WaitDevice blocks until DMA is >= 2 chunks ahead (wrap-safe distance)
+
+   Format handling:
+     - 16-bit: S16MSB native; S16LSB triggers inline byte-swap (asm, 8w/iter)
+     - 8-bit:  S8 native; U8 triggers XOR 0x80 conversion
+
+   Frequency matching: nearest entry in Falcon prescale table (49170→8195 Hz).
+
+   Requires: FreeMiNT (pthread_yield), Falcon or compatible DMA audio hardware.
+   ============================================================================ */
 
 #include "../../SDL_internal.h"
 #include "SDL.h"

@@ -1,9 +1,37 @@
 | ============================================================================
-| SDL_gemasm.S – 68000 C2P – PRODUCTION FINALE
+| Simple DirectMedia Layer
+| Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 | ============================================================================
-| Tous les labels commencent en colonne 0.
-| Sauvegarde split D2-D7 puis A2-A6 → pile toujours paire.
-| Accès paramètres par offsets absolus depuis SP.
+| This software is provided 'as-is', without any express or implied
+| warranty.  In no event will the authors be held liable for any damages
+| arising from the use of this software.
+|
+| Permission is granted to anyone to use this software for any purpose,
+| including commercial applications, and to alter it and redistribute it
+| freely, subject to the following restrictions:
+|
+| 1. The origin of this software must not be misrepresented; you must not
+|    claim that you wrote the original software. If you use this software
+|    in a product, an acknowledgment in the product documentation would be
+|    appreciated but is not required.
+| 2. Altered source versions must be plainly marked as such, and must not
+|    be misrepresented as being the original software.
+| 3. This notice may not be removed or altered from any source distribution.
+
+| ============================================================================
+| SDL_gemasm.S – 68000 hand-optimised C2P and pixel-format converters
+| Medour Mehdi - 2026
+| Architecture: Motorola 68000 / Atari ST-TT-Falcon
+|
+| Contains:
+|   - LUT + C2P routines for 1/2/4/8 bitplanes (primary code path)
+|   - RGB332 → RGB565 and RGB332 → ARGB8888 LUT converters
+|   - BGRA8888 → RGB332 converter
+|   - Atari_BlitFast_asm – aligned 32-bit row copy for TrueColor modes
+|   - Shared c2p_bit_mask table (16 words, referenced by all C2P routines)
+|
+| ABI: d2-d7 / a2-a6 callee-saved (split movem, parameters at offset 48).
+| All routines require 68000 only – no 68020 addressing modes used.
 | ============================================================================
 
     .text
@@ -17,256 +45,6 @@ _c2p_bit_mask:
     .dc.w   0x0800,0x0400,0x0200,0x0100
     .dc.w   0x0080,0x0040,0x0020,0x0010
     .dc.w   0x0008,0x0004,0x0002,0x0001
-
-| ============================================================================
-| Atari_C2P_8to1
-| ============================================================================
-    .globl  _Atari_C2P_8to1_asm
-_Atari_C2P_8to1_asm:
-    movem.l d2-d7,-(sp)
-    movem.l a2-a6,-(sp)
-
-    move.l  48(sp),a0
-    move.l  52(sp),a1
-    move.l  56(sp),d4
-    move.l  60(sp),d5
-    move.l  64(sp),a2
-    move.l  68(sp),a3
-
-    move.l  d4,d6
-    lsr.l   #4,d6
-    move.l  a2,d7
-    sub.l   d4,d7
-
-    lea     _c2p_bit_mask,a4
-
-    subq.l  #1,d5
-    bmi.s   .exit_8to1
-
-.row_8to1:
-    move.l  d6,d3
-    subq.l  #1,d3
-.block_8to1:
-    move.l  a4,a5
-    clr.w   (a1)
-    moveq   #15,d2
-.pix_8to1:
-    move.w  (a5)+,d1
-    move.b  (a0)+,d0
-    btst    #0,d0
-    beq.s   .skip1_8to1
-    or.w    d1,(a1)
-.skip1_8to1:
-    dbra    d2,.pix_8to1
-    addq.l  #2,a1
-    dbra    d3,.block_8to1
-    add.l   d7,a0
-    dbra    d5,.row_8to1
-
-.exit_8to1:
-    movem.l (sp)+,a2-a6
-    movem.l (sp)+,d2-d7
-    rts
-
-| ============================================================================
-| Atari_C2P_8to2
-| ============================================================================
-    .globl  _Atari_C2P_8to2_asm
-_Atari_C2P_8to2_asm:
-    movem.l d2-d7,-(sp)
-    movem.l a2-a6,-(sp)
-
-    move.l  48(sp),a0
-    move.l  52(sp),a1
-    move.l  56(sp),d4
-    move.l  60(sp),d5
-    move.l  64(sp),a2
-    move.l  68(sp),a3
-
-    move.l  d4,d6
-    lsr.l   #4,d6
-    move.l  a2,d7
-    sub.l   d4,d7
-
-    lea     _c2p_bit_mask,a4
-
-    subq.l  #1,d5
-    bmi.s   .exit_8to2
-
-.row_8to2:
-    move.l  d6,d3
-    subq.l  #1,d3
-.block_8to2:
-    move.l  a4,a5
-    clr.l   (a1)
-    moveq   #15,d2
-.pix_8to2:
-    move.w  (a5)+,d1
-    move.b  (a0)+,d0
-    btst    #0,d0
-    beq.s   .p0_8to2
-    or.w    d1,0(a1)
-.p0_8to2:
-    btst    #1,d0
-    beq.s   .p1_8to2
-    or.w    d1,2(a1)
-.p1_8to2:
-    dbra    d2,.pix_8to2
-    addq.l  #4,a1
-    dbra    d3,.block_8to2
-    add.l   d7,a0
-    dbra    d5,.row_8to2
-
-.exit_8to2:
-    movem.l (sp)+,a2-a6
-    movem.l (sp)+,d2-d7
-    rts
-
-| ============================================================================
-| Atari_C2P_8to4 – MODE ST STANDARD
-| ============================================================================
-    .globl  _Atari_C2P_8to4_asm
-_Atari_C2P_8to4_asm:
-    movem.l d2-d7,-(sp)
-    movem.l a2-a6,-(sp)
-
-    move.l  48(sp),a0
-    move.l  52(sp),a1
-    move.l  56(sp),d4
-    move.l  60(sp),d5
-    move.l  64(sp),a2
-    move.l  68(sp),a3
-
-    move.l  d4,d6
-    lsr.l   #4,d6
-    move.l  a2,d7
-    sub.l   d4,d7
-
-    lea     _c2p_bit_mask,a4
-
-    subq.l  #1,d5
-    bmi.s   .exit_8to4
-
-.row_8to4:
-    move.l  d6,d3
-    subq.l  #1,d3
-.block_8to4:
-    move.l  a4,a5
-    clr.l   (a1)+
-    clr.l   (a1)+
-    subq.l  #8,a1
-    moveq   #15,d2
-.pix_8to4:
-    move.w  (a5)+,d1
-    move.b  (a0)+,d0
-    btst    #0,d0
-    beq.s   .p0_8to4
-    or.w    d1,0(a1)
-.p0_8to4:
-    btst    #1,d0
-    beq.s   .p1_8to4
-    or.w    d1,2(a1)
-.p1_8to4:
-    btst    #2,d0
-    beq.s   .p2_8to4
-    or.w    d1,4(a1)
-.p2_8to4:
-    btst    #3,d0
-    beq.s   .p3_8to4
-    or.w    d1,6(a1)
-.p3_8to4:
-    dbra    d2,.pix_8to4
-    addq.l  #8,a1
-    dbra    d3,.block_8to4
-    add.l   d7,a0
-    dbra    d5,.row_8to4
-
-.exit_8to4:
-    movem.l (sp)+,a2-a6
-    movem.l (sp)+,d2-d7
-    rts
-
-| ============================================================================
-| Atari_C2P_8to8 – Falcon/TT
-| ============================================================================
-    .globl  _Atari_C2P_8to8_asm
-_Atari_C2P_8to8_asm:
-    movem.l d2-d7,-(sp)
-    movem.l a2-a6,-(sp)
-
-    move.l  48(sp),a0
-    move.l  52(sp),a1
-    move.l  56(sp),d4
-    move.l  60(sp),d5
-    move.l  64(sp),a2
-    move.l  68(sp),a3
-
-    move.l  d4,d6
-    lsr.l   #4,d6
-    move.l  a2,d7
-    sub.l   d4,d7
-
-    lea     _c2p_bit_mask,a4
-
-    subq.l  #1,d5
-    bmi.s   .exit_8to8
-
-.row_8to8:
-    move.l  d6,d3
-    subq.l  #1,d3
-.block_8to8:
-    move.l  a4,a5
-    clr.l   (a1)+
-    clr.l   (a1)+
-    clr.l   (a1)+
-    clr.l   (a1)+
-    lea     -16(a1),a1
-    moveq   #15,d2
-.pix_8to8:
-    move.w  (a5)+,d1
-    move.b  (a0)+,d0
-    btst    #0,d0
-    beq.s   .p0_8to8
-    or.w    d1,0(a1)
-.p0_8to8:
-    btst    #1,d0
-    beq.s   .p1_8to8
-    or.w    d1,2(a1)
-.p1_8to8:
-    btst    #2,d0
-    beq.s   .p2_8to8
-    or.w    d1,4(a1)
-.p2_8to8:
-    btst    #3,d0
-    beq.s   .p3_8to8
-    or.w    d1,6(a1)
-.p3_8to8:
-    btst    #4,d0
-    beq.s   .p4_8to8
-    or.w    d1,8(a1)
-.p4_8to8:
-    btst    #5,d0
-    beq.s   .p5_8to8
-    or.w    d1,10(a1)
-.p5_8to8:
-    btst    #6,d0
-    beq.s   .p6_8to8
-    or.w    d1,12(a1)
-.p6_8to8:
-    btst    #7,d0
-    beq.s   .p7_8to8
-    or.w    d1,14(a1)
-.p7_8to8:
-    dbra    d2,.pix_8to8
-    lea     16(a1),a1
-    dbra    d3,.block_8to8
-    add.l   d7,a0
-    dbra    d5,.row_8to8
-
-.exit_8to8:
-    movem.l (sp)+,a2-a6
-    movem.l (sp)+,d2-d7
-    rts
 
 | ============================================================================
 | Atari_C2P_8to4_LUT_asm - Combined LUT remap + C2P

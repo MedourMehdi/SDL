@@ -1,7 +1,35 @@
-/* ============================================
-   FILE: src/video/ataricommon/SDL_atarimodel.c
-   Hardware detection implementation
-   ============================================ */
+/*
+  Simple DirectMedia Layer
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
+
+  This software is provided 'as-is', without any express or implied
+  warranty.  In no event will the authors be held liable for any damages
+  arising from the use of this software.
+
+  Permission is granted to anyone to use this software for any purpose,
+  including commercial applications, and to alter it and redistribute it
+  freely, subject to the following restrictions:
+
+  1. The origin of this software must not be misrepresented; you must not
+     claim that you wrote the original software. If you use this software
+     in a product, an acknowledgment in the product documentation would be
+     appreciated but is not required.
+  2. Altered source versions must be plainly marked as such, and must not be
+     misrepresented as being the original software.
+  3. This notice may not be removed or altered from any source distribution.
+*/
+
+/* ============================================================================
+   SDL_gemmodel.c – Atari hardware detection
+   Medour Mehdi - 2026
+   Architecture: Motorola 68000 / Atari ST-TT-Falcon
+
+   Reads the BIOS cookie jar (_CPU, _MCH, _VDO, _SND, _MIL, hade, NOVA, IMNE)
+   to populate the global hw_info structure at VideoInit time.
+   Atari_GetMachineName() for logging.
+
+   C90 compliant.
+   ============================================================================ */
 #include "SDL_gemmodel.h"
 #include <mint/cookie.h>
 #include <mint/osbind.h>
@@ -133,24 +161,6 @@ void Atari_DetectHW(void)
     } else if (Getcookie(C_IMNE, &cookie_imne) == C_FOUND) {
         hw_info.hw_type = ATARI_HW_IMAGINE;
         hw_info.video = ATARI_VIDEO_IMAGINE;
-    }
-}
-
-void *Atari_SysMalloc(unsigned long size, unsigned short alloc_type)
-{
-    static int mxalloc_avail = -1;
-    
-    if (mxalloc_avail < 0) {
-        void *oldstack = (void *)Super(NULL);
-        OSHEADER *os_hdr = (OSHEADER *)*_sysbase;
-        mxalloc_avail = (os_hdr->os_version >= 0x0300);
-        Super(oldstack);
-    }
-    
-    if (mxalloc_avail) {
-        return (void *)Mxalloc(size, alloc_type);
-    } else {
-        return (void *)Malloc(size);
     }
 }
 

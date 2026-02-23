@@ -1,23 +1,44 @@
-/* ============================================================================
- * SDL_render_gem.c - Atari ST/TT/Falcon GEM Renderer (OPTIMIZED)
- *
- * OPTIMIZATIONS APPLIED:
- * 1. Smart dirty rectangle tracking (1-4 rects = direct, 5+ = checksum)
- * 2. Native-format texture storage: RGB332 textures are pre-converted to the
- *    window's native format (RGB565/888/ARGB8888) at upload time using LUTs,
- *    so GEM_OptimizedTextureCopy always hits the fast memcpy path.
- * 3. Proper integration with SDL_gemwindow.c checksum detection
- * 4. Eliminated redundant surface acquisition and double GetWindowSize calls
- * 5. Better decision logic for when to use checksums vs direct updates
- * 6. Memory access optimizations: bit flags, cached locals, precomputed edges
- * 7. Removed redundant zero-initialization after SDL_calloc
- * 8. Simplified control flow and reduced branching in hot paths
- * 9. Iteration limit on merge loop to prevent O(n^2) worst case
- * 10. LockTexture/UnlockTexture handle format conversion transparently,
- *     including correct partial-rect support
- * 11. C90 compliant
- * ============================================================================ */
+/*
+  Simple DirectMedia Layer
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
+  This software is provided 'as-is', without any express or implied
+  warranty.  In no event will the authors be held liable for any damages
+  arising from the use of this software.
+
+  Permission is granted to anyone to use this software for any purpose,
+  including commercial applications, and to alter it and redistribute it
+  freely, subject to the following restrictions:
+
+  1. The origin of this software must not be misrepresented; you must not
+     claim that you wrote the original software. If you use this software
+     in a product, an acknowledgment in the product documentation would be
+     appreciated but is not required.
+  2. Altered source versions must be plainly marked as such, and must not be
+     misrepresented as being the original software.
+  3. This notice may not be removed or altered from any source distribution.
+*/
+
+/* ============================================================================
+   SDL_render_gem.c – GEM software renderer for SDL2
+   Medour Mehdi - 2026
+   Architecture: Motorola 68000 / Atari ST-TT-Falcon
+
+   Implements the SDL2 render driver interface on top of the GEM framebuffer.
+   Textures are stored in the window's native pixel format at creation time
+   (RGB332 is pre-converted via LUT at upload) so GEM_OptimizedTextureCopy
+   always takes the fast memcpy path with no per-frame conversion cost.
+
+   Dirty rectangle strategy:
+     <= 4 rects  → direct partial VDI update
+      > 4 rects  → delegate to SDL_gemwindow checksum-based full scan
+
+   Supports: points, lines, filled rects, texture copy, partial lock/unlock.
+   Pixel formats: RGB332, RGB565, RGB888, ARGB8888, BGRA8888.
+
+   C90 compliant.
+   ============================================================================ */
+   
 #include "../../SDL_internal.h"
 
 #ifdef SDL_VIDEO_RENDER_GEM

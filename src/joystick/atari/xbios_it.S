@@ -1,23 +1,42 @@
-/*
- * xbios_it.S - XBIOS joystick vector handler
- *
- * XbiosJoystickVector is installed into _KBDVECS.joyvec (offset 24).
- * The OS calls it with a0 pointing to the 3-byte IKBD joystick packet:
- *   a0@(0) = 0xFD  (packet header)
- *   a0@(1) = joy0  (port 0, mouse port - usually ignored)
- *   a0@(2) = joy1  (port 1, joystick port)
- *
- * Bit layout of joy1 byte (same for joy0):
- *   bit 0 = forward  (up)
- *   bit 1 = back     (down)
- *   bit 2 = left
- *   bit 3 = right
- *   bit 7 = fire
- *   bits 4-6 = always 0
- *
- * We save only d0 and a1. We must NOT restore a0 before chaining
- * because the old handler also expects a0 pointing to the packet.
- */
+| ============================================================================
+| xbios_it.S - XBIOS joystick vector handler
+| ============================================================================
+| Simple DirectMedia Layer
+| Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
+|
+| This software is provided 'as-is', without any express or implied warranty.
+| In no event will the authors be held liable for any damages arising from the
+| use of this software.
+|
+| Permission is granted to anyone to use this software for any purpose, including
+| commercial applications, and to alter it and redistribute it freely, subject
+| to the following restrictions:
+|
+| 1. The origin of this software must not be misrepresented; you must not claim
+|    that you wrote the original software. If you use this software in a product,
+|    an acknowledgment in the product documentation would be appreciated but is
+|    not required.
+| 2. Altered source versions must be plainly marked as such, and must not be
+|    misrepresented as being the original software.
+| 3. This notice may not be removed or altered from any source distribution.
+
+| ============================================================================
+| Adapted from original sdl 1.2 code written by Patrice Mandin
+| ============================================================================
+| xbios_it.S – XBIOS joystick interrupt vector handler
+| Medour Mehdi - 2026
+| Architecture: Motorola 68000 / Atari ST-TT-Falcon
+|
+| XbiosInstall   — saves the current joyvec and installs XbiosJoystickVector.
+|                  Must be called via Supexec().
+| XbiosUninstall — restores the original joyvec.
+|                  Must be called via Supexec().
+| XbiosJoystickVector — called by the IKBD at interrupt level on every
+|                  joystick packet. Masks the byte with 0x8F and stores
+|                  it in Xbios_joystick for the main thread to read.
+|
+| ABI: interrupt handler — no C ABI; all registers preserved.
+| ============================================================================
 
 #if defined(__mcoldfire__)
 # define SAVESTACK    lea sp@(-8),sp; moveml d0/a1,sp@
@@ -35,14 +54,18 @@
     .globl _Xbios_joystick
     .globl _old_joy_vec
 
-/* -----------------------------------------------------------------------
- * XbiosInstall(_KBDVECS *kbdvecs, void *newvector)
- *
- * Stack on entry (after SAVESTACK pushes d0/a0-a1, 12 bytes):
- *   sp+12 = return address
- *   sp+16 = kbdvecs
- *   sp+20 = newvector
- * ----------------------------------------------------------------------- */
+| ============================================================================
+| XbiosInstall – Install XBIOS keyboard/joystick vector
+| ============================================================================
+| Stack on entry (after SAVESTACK pushes d0/a0-a1, 12 bytes):
+|   SP+12 = return address
+|   SP+16 = kbdvecs  (_KBDVECS pointer)
+|   SP+20 = newvector (handler function pointer)
+|
+| Sauvegarde: d0/a0-a1 → pile (12 bytes)
+| Paramètres: offsets absolus depuis SP après save
+| ============================================================================
+
 _XbiosInstall:
 #if defined(__mcoldfire__)
     lea     sp@(-12),sp

@@ -1,11 +1,39 @@
 | ============================================================================
-| SDL_gemchecksum.S – m68000 Optimized Checksum Routines
+| Simple DirectMedia Layer
+| Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
+| ============================================================================
+| This software is provided 'as-is', without any express or implied
+| warranty.  In no event will the authors be held liable for any damages
+| arising from the use of this software.
 |
-| Architecture: Motorola 68000 (Atari ST/TT/Falcon)
-| ABI Compliance: d2-d7/a2-a6 callee-saved
+| Permission is granted to anyone to use this software for any purpose,
+| including commercial applications, and to alter it and redistribute it
+| freely, subject to the following restrictions:
 |
-| Optimized for: 320x200 (ST low), 640x400 (TT high), batch processing
-| Algorithm: 16-bit word sum, folded to 8-bit via XOR
+| 1. The origin of this software must not be misrepresented; you must not
+|    claim that you wrote the original software. If you use this software
+|    in a product, an acknowledgment in the product documentation would be
+|    appreciated but is not required.
+| 2. Altered source versions must be plainly marked as such, and must not
+|    be misrepresented as being the original software.
+| 3. This notice may not be removed or altered from any source distribution.
+
+| ============================================================================
+| SDL_gemchecksum.S – 68000 optimised row-checksum routines
+| Medour Mehdi - 2026
+| Architecture: Motorola 68000 / Atari ST-TT-Falcon
+|
+| Used by the SDL_GEM_DIRTY_RECT fast-change detection system to avoid
+| blitting unchanged rows to the VDI framebuffer.
+|
+| Contains:
+|   - Atari_CalculateRowChecksum        – generic, arbitrary row length
+|   - Atari_CalculateRowChecksum_320    – fixed 320 bytes (ST low)
+|   - Atari_CalculateRowChecksum_640    – fixed 640 bytes (TT/Falcon)
+|   - Atari_CalculateRowChecksumsBlock  – batch, processes N rows at once
+|
+| Algorithm: 16-bit word accumulator, folded to 8 bits via XOR.
+| ABI: d2-d7 / a2-a6 callee-saved.
 | ============================================================================
 
     .text
@@ -83,8 +111,8 @@ _Atari_CalculateRowChecksum:
 | Atari_CalculateRowChecksum_320
 | Optimized for ST low resolution (320 bytes per row)
 |
-| Structure: 5 outer iterations × 8 inner iterations × 8 bytes
-| Total: 5 × 8 × 8 = 320 bytes
+| Structure: 5 outer iterations x 8 inner iterations x 8 bytes
+| Total: 5 x 8 x 8 = 320 bytes
 | ============================================================================
 
     .globl  _Atari_CalculateRowChecksum_320
@@ -122,8 +150,8 @@ _Atari_CalculateRowChecksum_320:
 | Atari_CalculateRowChecksum_640
 | Optimized for TT/Falcon high resolution (640 bytes per row)
 |
-| Structure: 10 outer iterations × 8 inner iterations × 8 bytes
-| Total: 10 × 8 × 8 = 640 bytes
+| Structure: 10 outer iterations x 8 inner iterations x 8 bytes
+| Total: 10 x 8 x 8 = 640 bytes
 | ============================================================================
 
     .globl  _Atari_CalculateRowChecksum_640

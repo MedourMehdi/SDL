@@ -1,21 +1,40 @@
-/* ============================================
-   SDL_gemwindow.c - Optimized 68000 Implementation
-   
-   OPTIMIZATIONS APPLIED:
-   - Fixed checksum width consistency bug (aligned_w)
-   - Buffer reuse when size unchanged
-   - Helper functions to eliminate code duplication
-   - SDL_memcpy instead of manual loops
-   - Reduced variable declarations
-   - Type-safe buffer size calculations
-   
-   BUGS FIXED:
-   - Checksum width mismatch between detect and update
-   - Frame counter reset logic
-   - Added checksum_height tracking
-   
-   C90 COMPLIANT
-   ============================================ */
+/*
+  Simple DirectMedia Layer
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
+
+  This software is provided 'as-is', without any express or implied
+  warranty.  In no event will the authors be held liable for any damages
+  arising from the use of this software.
+
+  Permission is granted to anyone to use this software for any purpose,
+  including commercial applications, and to alter it and redistribute it
+  freely, subject to the following restrictions:
+
+  1. The origin of this software must not be misrepresented; you must not
+     claim that you wrote the original software. If you use this software
+     in a product, an acknowledgment in the product documentation would be
+     appreciated but is not required.
+  2. Altered source versions must be plainly marked as such, and must not be
+     misrepresented as being the original software.
+  3. This notice may not be removed or altered from any source distribution.
+*/
+
+/* ============================================================================
+   SDL_gemwindow.c – GEM window, framebuffer and C2P dispatch
+   Medour Mehdi - 2026
+   Architecture: Motorola 68000 / Atari ST-TT-Falcon
+
+   Responsibilities: window creation/destruction, framebuffer allocation,
+   dirty-rect detection (optional SDL_GEM_DIRTY_RECT), C2P dispatch via
+   Atari_C2P_Planar_LUT, and all AES window management calls.
+
+   Key design decisions:
+   - Buffers are reused across resizes when size is unchanged.
+   - Checksum width uses aligned_w consistently to avoid mismatch bugs.
+   - All C2P paths go through the LUT; no shift-based fallback at runtime.
+
+   C90 compliant.
+   ============================================================================ */
 
 #include "SDL_gemvideo.h"
 #include "mt_gemx.h"
@@ -1027,7 +1046,7 @@ int GEM_CreateWindow(SDL_VideoDevice *this, SDL_Window *window)
     window->driverdata = data;
 
     SDL_SetKeyboardFocus(window);
-    
+
     return 0;
 }
 

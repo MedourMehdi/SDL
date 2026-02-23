@@ -1,69 +1,66 @@
-#include "SDL_gemvideo.h"
+/*
+  Simple DirectMedia Layer
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
-#ifdef SDL_GEM_C2P_ASM
-    /* Ces symboles sont définis dans l'assembleur */
-    extern void Atari_C2P_8to1_asm(void*, void*, int, int, int, int);
-    extern void Atari_C2P_8to2_asm(void*, void*, int, int, int, int);
-    extern void Atari_C2P_8to4_asm(void*, void*, int, int, int, int);
-    extern void Atari_C2P_8to8_asm(void*, void*, int, int, int, int);
-    extern void Atari_ConvertBGRA8888toRGB332_asm(const Uint8 *src, Uint8 *dst,
-                                                  int width, int height,
-                                                  int src_pitch, int dst_pitch);
-    /* Combined LUT + C2P routines */
-    extern void Atari_C2P_8to1_LUT_asm(void*, void*, int, int, int, int, Uint8*);
-    extern void Atari_C2P_8to2_LUT_asm(void*, void*, int, int, int, int, Uint8*);
-    extern void Atari_C2P_8to4_LUT_asm(void*, void*, int, int, int, int, Uint8*);
-    extern void Atari_C2P_8to8_LUT_asm(void*, void*, int, int, int, int, Uint8*);
+  This software is provided 'as-is', without any express or implied
+  warranty.  In no event will the authors be held liable for any damages
+  arising from the use of this software.
 
-    #define C2P_8to1(a, b, c, d, e, f) Atari_C2P_8to1_asm(a, b, c, d, e, f)
-    #define C2P_8to2(a, b, c, d, e, f) Atari_C2P_8to2_asm(a, b, c, d, e, f)
-    #define C2P_8to4(a, b, c, d, e, f) Atari_C2P_8to4_asm(a, b, c, d, e, f)
-    #define C2P_8to8(a, b, c, d, e, f) Atari_C2P_8to8_asm(a, b, c, d, e, f)
+  Permission is granted to anyone to use this software for any purpose,
+  including commercial applications, and to alter it and redistribute it
+  freely, subject to the following restrictions:
 
-#else
-    #define C2P_8to1(a, b, c, d, e, f) Atari_C2P_8to1(a, b, c, d, e, f)
-    #define C2P_8to2(a, b, c, d, e, f) Atari_C2P_8to2(a, b, c, d, e, f)
-    #define C2P_8to4(a, b, c, d, e, f) Atari_C2P_8to4(a, b, c, d, e, f)
-    #define C2P_8to8(a, b, c, d, e, f) Atari_C2P_8to8(a, b, c, d, e, f)
-#endif
+  1. The origin of this software must not be misrepresented; you must not
+     claim that you wrote the original software. If you use this software
+     in a product, an acknowledgment in the product documentation would be
+     appreciated but is not required.
+  2. Altered source versions must be plainly marked as such, and must not be
+     misrepresented as being the original software.
+  3. This notice may not be removed or altered from any source distribution.
+*/
 
 /* ============================================================================
-   RGB332 to TrueColor Fast Converters - m68000 Optimized LUT-based
-   
-   These functions provide fast conversion from SDL's RGB332 (8bpp) format
-   to native TrueColor formats using lookup tables.
-   
-   Memory usage: ~2.5KB total for all LUTs
-   - RGB565 table: 512 bytes (256 entries * 2 bytes)
-   - RGB888 table: 1KB (256 entries * 4 bytes, packed)
-   - ARGB8888 table: 1KB (256 entries * 4 bytes)
-   
-   Performance: ~10-50x faster than generic SDL_ConvertPixels()
+   SDL_gemc2p.c – Chunky-to-Planar and pixel-format converters
+   Medour Mehdi - 2026
+   Architecture: Motorola 68000 / Atari ST-TT-Falcon
+
+   Strategy: LUT-first everywhere. The shift-based C2P variants
+             (Atari_C2P_8to4, Atari_C2P_8to8) are removed; in pure-C mode
+             every planar path goes through c2p_lut_core(). When
+             SDL_GEM_C2P_ASM is defined the hand-written LUT+C2P assembly
+             routines are used instead.
+
+   C90 compliant.
    ============================================================================ */
 
-/* Lookup tables - initialized on first use */
+#include "SDL_gemvideo.h"
+
+/* ============================================================================
+   Section 1 – RGB332 → TrueColor LUT tables
+   Memory: 512 + 1024 + 1024 = 2560 bytes total
+   ============================================================================ */
+
 Uint16 rgb332_to_rgb565_lut[256];
-Uint32 rgb332_to_rgb888_lut[256];   /* Packed as 0x00RRGGBB */
-Uint32 rgb332_to_argb8888_lut[256]; /* Packed as 0xAARRGGBB, A=0xFF */
+Uint32 rgb332_to_rgb888_lut[256];    /* 0x00RRGGBB */
+Uint32 rgb332_to_argb8888_lut[256];  /* 0xFFRRGGBB */
+
 static int rgb332_tc_lut_initialized = 0;
 
-/* Initialize RGB332 to TrueColor LUTs - called automatically */
 static void Atari_InitRGB332toTrueColorLUTs(void)
 {
     int i;
-    Uint8 r3, g3, b2;
-    Uint8 r8, g8, b8;
+    Uint8  r3, g3, b2;
+    Uint8  r8, g8, b8;
     Uint16 r5, g6, b5;
 
-    if (rgb332_tc_lut_initialized) {
-        return;
-    }
+    if (rgb332_tc_lut_initialized) return;
 
     for (i = 0; i < 256; i++) {
         r3 = (Uint8)((i >> 5) & 0x07);
         g3 = (Uint8)((i >> 2) & 0x07);
         b2 = (Uint8)(i & 0x03);
 
+        /* Expand to 8-bit via replication */
         r8 = (Uint8)((r3 << 5) | (r3 << 2) | (r3 >> 1));
         g8 = (Uint8)((g3 << 5) | (g3 << 2) | (g3 >> 1));
         b8 = (Uint8)((b2 << 6) | (b2 << 4) | (b2 << 2) | b2);
@@ -72,124 +69,100 @@ static void Atari_InitRGB332toTrueColorLUTs(void)
         g6 = (Uint16)((g3 * 63) / 7);
         b5 = (Uint16)((b2 * 31) / 3);
 
-        rgb332_to_rgb565_lut[i] = (Uint16)((r5 << 11) | (g6 << 5) | b5);
-
-        rgb332_to_rgb888_lut[i] = ((Uint32)r8 << 16) |
-                                   ((Uint32)g8 << 8)  | b8;
-
-        rgb332_to_argb8888_lut[i] = 0xFF000000UL        |
-                                     ((Uint32)r8 << 16)  |
-                                     ((Uint32)g8 << 8)   | b8;
+        rgb332_to_rgb565_lut[i]   = (Uint16)((r5 << 11) | (g6 << 5) | b5);
+        rgb332_to_rgb888_lut[i]   = ((Uint32)r8 << 16) | ((Uint32)g8 << 8) | b8;
+        rgb332_to_argb8888_lut[i] = 0xFF000000UL
+                                  | ((Uint32)r8 << 16)
+                                  | ((Uint32)g8 << 8)
+                                  | b8;
     }
 
     rgb332_tc_lut_initialized = 1;
 }
 
+/* ============================================================================
+   Section 2 – RGB332 → TrueColor converters
+   ASM versions (SDL_GEM_C2P_ASM) are thin wrappers that ensure the LUT is
+   initialised before handing off to the hand-written inner loop.
+   ============================================================================ */
+
 #ifdef SDL_GEM_C2P_ASM
-    void Atari_ConvertRGB332toRGB565(const Uint8 *src, Uint16 *dst,
-                                    int width, int height,
-                                    int src_pitch, int dst_pitch)
-    {
-        if (!src || !dst || width <= 0 || height <= 0) return;
 
-        if (!rgb332_tc_lut_initialized) {
-            Atari_InitRGB332toTrueColorLUTs();
-        }
+void Atari_ConvertRGB332toRGB565(const Uint8 *src, Uint16 *dst,
+                                 int width, int height,
+                                 int src_pitch, int dst_pitch)
+{
+    if (!src || !dst || width <= 0 || height <= 0) return;
+    if (!rgb332_tc_lut_initialized) Atari_InitRGB332toTrueColorLUTs();
+    Atari_ConvertRGB332toRGB565_asm(src, dst, width, height, src_pitch, dst_pitch);
+}
 
-        Atari_ConvertRGB332toRGB565_asm(src, dst, width, height,
-                                        src_pitch, dst_pitch);
-    }
+void Atari_ConvertRGB332toARGB8888(const Uint8 *src, Uint32 *dst,
+                                   int width, int height,
+                                   int src_pitch, int dst_pitch)
+{
+    if (!src || !dst || width <= 0 || height <= 0) return;
+    if (!rgb332_tc_lut_initialized) Atari_InitRGB332toTrueColorLUTs();
+    Atari_ConvertRGB332toARGB8888_asm(src, dst, width, height, src_pitch, dst_pitch);
+}
 
-    void Atari_ConvertRGB332toARGB8888(const Uint8 *src, Uint32 *dst,
-                                      int width, int height,
-                                      int src_pitch, int dst_pitch)
-    {
-        if (!src || !dst || width <= 0 || height <= 0) return;
+void Atari_ConvertBGRA8888toRGB332(const Uint8 *src, Uint8 *dst,
+                                   int width, int height,
+                                   int src_pitch, int dst_pitch)
+{
+    if (!src || !dst || width <= 0 || height <= 0) return;
+    Atari_ConvertBGRA8888toRGB332_asm(src, dst, width, height, src_pitch, dst_pitch);
+}
 
-        if (!rgb332_tc_lut_initialized) {
-            Atari_InitRGB332toTrueColorLUTs();
-        }
+#else /* pure-C implementations */
 
-        Atari_ConvertRGB332toARGB8888_asm(src, dst, width, height,
-                                        src_pitch, dst_pitch);
-    }
-
-    void Atari_ConvertBGRA8888toRGB332(const Uint8 *src, Uint8 *dst,
-                                    int width, int height,
-                                    int src_pitch, int dst_pitch)
-    {
-        if (!src || !dst || width <= 0 || height <= 0) return;
-        
-        Atari_ConvertBGRA8888toRGB332_asm(src, dst, width, height,
-                                        src_pitch, dst_pitch);
-    }
-#else
-/* RGB332 -> RGB565 (16bpp) - 2 bytes per pixel, aligned writes */
-void Atari_ConvertRGB332toRGB565(const Uint8 *src, Uint16 *dst, 
+void Atari_ConvertRGB332toRGB565(const Uint8 *src, Uint16 *dst,
                                  int width, int height,
                                  int src_pitch, int dst_pitch)
 {
     int y, x;
     const Uint8 *src_row;
-    Uint16 *dst_row;
-    
-    if (!src || !dst || width <= 0 || height <= 0) {
-        return;
-    }
-    
-    if (!rgb332_tc_lut_initialized) {
-        Atari_InitRGB332toTrueColorLUTs();
-    }
-    
+    Uint16      *dst_row;
+
+    if (!src || !dst || width <= 0 || height <= 0) return;
+    if (!rgb332_tc_lut_initialized) Atari_InitRGB332toTrueColorLUTs();
+
     for (y = 0; y < height; y++) {
         src_row = src + (y * src_pitch);
         dst_row = (Uint16 *)((Uint8 *)dst + (y * dst_pitch));
-        
-        /* Unroll by 4 for m68000 - reduces loop overhead */
         for (x = 0; x < width - 3; x += 4) {
             dst_row[x]   = rgb332_to_rgb565_lut[src_row[x]];
             dst_row[x+1] = rgb332_to_rgb565_lut[src_row[x+1]];
             dst_row[x+2] = rgb332_to_rgb565_lut[src_row[x+2]];
             dst_row[x+3] = rgb332_to_rgb565_lut[src_row[x+3]];
         }
-        /* Handle remaining pixels */
-        for (; x < width; x++) {
+        for (; x < width; x++)
             dst_row[x] = rgb332_to_rgb565_lut[src_row[x]];
-        }
     }
 }
 
-/* RGB332 -> ARGB8888 (32bpp) - 4 bytes per pixel, aligned writes */
-void Atari_ConvertRGB332toARGB8888(const Uint8 *src, Uint32 *dst, 
+void Atari_ConvertRGB332toARGB8888(const Uint8 *src, Uint32 *dst,
                                    int width, int height,
                                    int src_pitch, int dst_pitch)
 {
     int y, x;
     const Uint8 *src_row;
-    Uint32 *dst_row;
-    
-    if (!src || !dst || width <= 0 || height <= 0) {
-        return;
-    }
-    
-    if (!rgb332_tc_lut_initialized) {
-        Atari_InitRGB332toTrueColorLUTs();
-    }
-    
+    Uint32      *dst_row;
+
+    if (!src || !dst || width <= 0 || height <= 0) return;
+    if (!rgb332_tc_lut_initialized) Atari_InitRGB332toTrueColorLUTs();
+
     for (y = 0; y < height; y++) {
         src_row = src + (y * src_pitch);
         dst_row = (Uint32 *)((Uint8 *)dst + (y * dst_pitch));
-        
-        /* Unroll by 4 for m68000 */
         for (x = 0; x < width - 3; x += 4) {
             dst_row[x]   = rgb332_to_argb8888_lut[src_row[x]];
             dst_row[x+1] = rgb332_to_argb8888_lut[src_row[x+1]];
             dst_row[x+2] = rgb332_to_argb8888_lut[src_row[x+2]];
             dst_row[x+3] = rgb332_to_argb8888_lut[src_row[x+3]];
         }
-        for (; x < width; x++) {
+        for (; x < width; x++)
             dst_row[x] = rgb332_to_argb8888_lut[src_row[x]];
-        }
     }
 }
 
@@ -205,7 +178,6 @@ void Atari_ConvertBGRA8888toRGB332(const Uint8 *src, Uint8 *dst,
 
     for (y = 0; y < height; y++) {
         for (x = 0; x < width; x++) {
-            /* [B][G][R][A] in memory */
             Uint8 b = src[0];
             Uint8 g = src[1];
             Uint8 r = src[2];
@@ -217,582 +189,200 @@ void Atari_ConvertBGRA8888toRGB332(const Uint8 *src, Uint8 *dst,
         dst += dst_skip;
     }
 }
+
 #endif /* SDL_GEM_C2P_ASM */
 
-/* RGB332 -> RGB888 (24bpp) - 3 bytes per pixel, packed */
-void Atari_ConvertRGB332toRGB888(const Uint8 *src, Uint8 *dst, 
+/* ============================================================================
+   Section 3 – RGB332 → RGB888 (24-bit packed, no ASM variant needed)
+   ============================================================================ */
+
+void Atari_ConvertRGB332toRGB888(const Uint8 *src, Uint8 *dst,
                                  int width, int height,
                                  int src_pitch, int dst_pitch)
 {
     int y, x;
     const Uint8 *src_row;
-    Uint8 *dst_row;
-    Uint32 packed;
-    
-    if (!src || !dst || width <= 0 || height <= 0) {
-        return;
-    }
-    
-    if (!rgb332_tc_lut_initialized) {
-        Atari_InitRGB332toTrueColorLUTs();
-    }
-    
+    Uint8       *dst_row;
+    Uint32       packed;
+
+    if (!src || !dst || width <= 0 || height <= 0) return;
+    if (!rgb332_tc_lut_initialized) Atari_InitRGB332toTrueColorLUTs();
+
     for (y = 0; y < height; y++) {
         src_row = src + (y * src_pitch);
         dst_row = dst + (y * dst_pitch);
-        
         for (x = 0; x < width; x++) {
             packed = rgb332_to_rgb888_lut[src_row[x]];
-            /* Store as R, G, B (big-endian order for Atari) */
-            dst_row[x*3 + 0] = (packed >> 16) & 0xFF;  /* Red */
-            dst_row[x*3 + 1] = (packed >> 8)  & 0xFF;  /* Green */
-            dst_row[x*3 + 2] = packed & 0xFF;         /* Blue */
+            dst_row[x*3 + 0] = (Uint8)((packed >> 16) & 0xFF);
+            dst_row[x*3 + 1] = (Uint8)((packed >>  8) & 0xFF);
+            dst_row[x*3 + 2] = (Uint8)( packed        & 0xFF);
         }
     }
 }
 
-/* RGB332 -> ABGR8888 (32bpp, byte-swapped) - for little-endian formats */
-void Atari_ConvertRGB332toABGR8888(const Uint8 *src, Uint32 *dst, 
-                                   int width, int height,
-                                   int src_pitch, int dst_pitch)
-{
-    int y, x;
-    const Uint8 *src_row;
-    Uint32 *dst_row;
-    Uint32 argb;
-    
-    if (!src || !dst || width <= 0 || height <= 0) {
-        return;
-    }
-    
-    if (!rgb332_tc_lut_initialized) {
-        Atari_InitRGB332toTrueColorLUTs();
-    }
-    
-    for (y = 0; y < height; y++) {
-        src_row = src + (y * src_pitch);
-        dst_row = (Uint32 *)((Uint8 *)dst + (y * dst_pitch));
-        
-        for (x = 0; x < width; x++) {
-            argb = rgb332_to_argb8888_lut[src_row[x]];
-            /* Swap R and B: ARGB -> ABGR */
-            /* Keep A and G, swap R and B */
-            dst_row[x] = (argb & 0xFF00FF00UL) |           /* A and G unchanged */
-                         ((argb & 0x00FF0000UL) >> 16) |   /* R to B position */
-                         ((argb & 0x000000FFUL) << 16);    /* B to R position */
-        }
-    }
-}
+/* ============================================================================
+   Section 4 – C2P lookup tables (pure-C path only)
 
-/* ====================================================================
-   FILE: SDL_gemc2p_optimized.c
-   Optimized Atari Chunky-to-Planar Conversion Routines
-   
-   OPTIMIZATIONS:
-   1. Lookup table-based C2P for 68000 (eliminates variable shifts)
-   2. CPU-adaptive selection (LUT for 68000, shift-based for 030+)
-   3. Unrolled memory copy for TrueColor modes
-   ==================================================================== */
+   c2p_plane_lut[pixel] stores the bitmask contribution of that pixel for
+   each of the 8 bitplanes, pre-indexed by bit position within a 16-pixel
+   block.  Built once, used by every LUT-based C2P function below.
+
+   NOTE: the per-block bit-position mask (c2p_bit_mask) is still referenced
+   by the ASM routines through the global symbol; keep the declaration but
+   there is no longer a separate static copy in C — we use a local constant
+   array instead to avoid the duplicate symbol when both C and ASM are linked.
+   ============================================================================ */
 
 #ifndef SDL_GEM_C2P_ASM
 
-/* --------------------------------------------------------------------
-   Lookup Tables for Fast C2P Conversion
-   -------------------------------------------------------------------- */
-
-/* Bit position masks for 16-pixel words (MSB first) */
-static uint16_t c2p_bit_mask[16] = {
-    0x8000, 0x4000, 0x2000, 0x1000, 0x0800, 0x0400, 0x0200, 0x0100,
-    0x0080, 0x0040, 0x0020, 0x0010, 0x0008, 0x0004, 0x0002, 0x0001
+/* Local bit-position table (not exported – ASM has its own copy) */
+static const Uint16 c2p_bitmask[16] = {
+    0x8000, 0x4000, 0x2000, 0x1000,
+    0x0800, 0x0400, 0x0200, 0x0100,
+    0x0080, 0x0040, 0x0020, 0x0010,
+    0x0008, 0x0004, 0x0002, 0x0001
 };
 
-/* Plane expansion lookup: Given pixel value, return 16-bit word for each plane */
-/* This is a 2KB table (256 pixels × 8 planes × 2 bytes) */
-static uint16_t c2p_plane_expand[256][8];
-static int c2p_tables_initialized = 0;
+/* ============================================================================
+   LUT C2P core – shared by all plane-count variants.
 
-/* --------------------------------------------------------------------
-   Initialize C2P lookup tables - call once at startup
-   -------------------------------------------------------------------- */
-void Atari_C2P_InitTables(void)
-{
-    int pixel, plane;
-    
-    if (c2p_tables_initialized) return;
-    
-    /* For each possible pixel value (0-255) */
-    for (pixel = 0; pixel < 256; pixel++) {
-        /* For each bitplane (0-7) */
-        for (plane = 0; plane < 8; plane++) {
-            uint16_t word = 0;
-            
-            /* If this pixel has this plane bit set, set all 16 bits */
-            if (pixel & (1 << plane)) {
-                word = 0xFFFF;
-            }
-            
-            c2p_plane_expand[pixel][plane] = word;
-        }
-    }
-    
-    c2p_tables_initialized = 1;
-}
+   For each 16-pixel block:
+     1. Apply optional palette remap via `lut` (pass NULL to skip).
+     2. Scatter bits into `planes` words using bitmask table.
+     3. Write `num_planes` words to dst.
 
-/* --------------------------------------------------------------------
-   Atari_C2P_8to8_LUT
-   
-   Converts 8-bit chunky to 8-bit planar using lookup tables.
-   MUCH faster on 68000 (no variable shifts).
-   -------------------------------------------------------------------- */
-void Atari_C2P_8to8_LUT(void *src, void *dst, int width, int height,
-                        int src_pitch, int dst_pitch)
+   This single function replaces the four separate Atari_C2P_8toN_LUT
+   functions from the original code.
+   ============================================================================ */
+static void c2p_lut_core(const Uint8 *src, Uint8 *dst,
+                          int width, int height,
+                          int src_pitch, int dst_pitch,
+                          int num_planes, const Uint8 *lut)
 {
-    uint8_t *src_ptr = (uint8_t *)src;
-    uint16_t *dst_ptr = (uint16_t *)dst;
-    int y, x, px, plane;
-    
-    int src_skip = src_pitch - width;
-    int dst_bytes_per_row = (width >> 4) * 16;
-    int dst_skip = (dst_pitch - dst_bytes_per_row) / 2;
-    
-    /* Ensure tables are initialized */
-    if (!c2p_tables_initialized) Atari_C2P_InitTables();
-    
+    Uint16 planes[8];
+    int y, x, px, p;
+    int src_skip        = src_pitch - width;
+    int dst_plane_bytes = (width >> 4) * (num_planes * 2);
+    int dst_skip        = dst_pitch - dst_plane_bytes;
+    const Uint8  *sp    = src;
+    Uint16       *dp    = (Uint16 *)dst;
+
     for (y = 0; y < height; y++) {
-        /* Process 16 pixels at a time */
         for (x = 0; x < width; x += 16) {
-            uint16_t planes[8] = {0};
-            
-            /* Process 16 pixels, building up plane words */
+            /* Zero plane accumulators */
+            for (p = 0; p < num_planes; p++) planes[p] = 0;
+
             for (px = 0; px < 16; px++) {
-                uint8_t pixel = src_ptr[px];
-                uint16_t mask = c2p_bit_mask[px];
-                
-                /* Add this pixel's contribution to each plane */
-                if (pixel & 0x01) planes[0] |= mask;
-                if (pixel & 0x02) planes[1] |= mask;
-                if (pixel & 0x04) planes[2] |= mask;
-                if (pixel & 0x08) planes[3] |= mask;
-                if (pixel & 0x10) planes[4] |= mask;
-                if (pixel & 0x20) planes[5] |= mask;
-                if (pixel & 0x40) planes[6] |= mask;
-                if (pixel & 0x80) planes[7] |= mask;
+                Uint8  raw   = *sp++;
+                Uint8  pixel = lut ? lut[raw] : raw;
+                Uint16 mask  = c2p_bitmask[px];
+
+                /* Unrolled per plane – compiler will trim unused arms */
+                if (num_planes >= 1 && (pixel & 0x01)) planes[0] |= mask;
+                if (num_planes >= 2 && (pixel & 0x02)) planes[1] |= mask;
+                if (num_planes >= 4 && (pixel & 0x04)) planes[2] |= mask;
+                if (num_planes >= 4 && (pixel & 0x08)) planes[3] |= mask;
+                if (num_planes >= 8 && (pixel & 0x10)) planes[4] |= mask;
+                if (num_planes >= 8 && (pixel & 0x20)) planes[5] |= mask;
+                if (num_planes >= 8 && (pixel & 0x40)) planes[6] |= mask;
+                if (num_planes >= 8 && (pixel & 0x80)) planes[7] |= mask;
             }
-            
-            /* Write interleaved planes */
-            for (plane = 0; plane < 8; plane++) {
-                *dst_ptr++ = planes[plane];
-            }
-            
-            src_ptr += 16;
+
+            for (p = 0; p < num_planes; p++) *dp++ = planes[p];
         }
-        
-        src_ptr += src_skip;
-        dst_ptr += dst_skip;
+        sp += src_skip;
+        dp  = (Uint16 *)((Uint8 *)dp + dst_skip);
     }
 }
 
-/* --------------------------------------------------------------------
-   Atari_C2P_8to4_LUT
-   
-   Converts 8-bit chunky to 4-bit planar using lookup tables.
-   -------------------------------------------------------------------- */
-void Atari_C2P_8to4_LUT(void *src, void *dst, int width, int height,
-                        int src_pitch, int dst_pitch)
+/* Public single-function C2P with integrated LUT remap */
+void Atari_C2P_Planar_LUT(void *src, void *dst, int width, int height,
+                           int src_pitch, int dst_pitch,
+                           int planes, Uint8 *lut)
 {
-    uint8_t *src_ptr = (uint8_t *)src;
-    uint16_t *dst_ptr = (uint16_t *)dst;
-    int y, x, px, plane;
-    
-    int src_skip = src_pitch - width;
-    int dst_bytes_per_row = (width >> 4) * 8;
-    int dst_skip = (dst_pitch - dst_bytes_per_row) / 2;
-    
-    if (!c2p_tables_initialized) Atari_C2P_InitTables();
-    
-    for (y = 0; y < height; y++) {
-        for (x = 0; x < width; x += 16) {
-            uint16_t planes[4] = {0};
-            
-            for (px = 0; px < 16; px++) {
-                uint8_t pixel = src_ptr[px];
-                uint16_t mask = c2p_bit_mask[px];
-                
-                if (pixel & 0x01) planes[0] |= mask;
-                if (pixel & 0x02) planes[1] |= mask;
-                if (pixel & 0x04) planes[2] |= mask;
-                if (pixel & 0x08) planes[3] |= mask;
-            }
-            
-            for (plane = 0; plane < 4; plane++) {
-                *dst_ptr++ = planes[plane];
-            }
-            
-            src_ptr += 16;
-        }
-        
-        src_ptr += src_skip;
-        dst_ptr += dst_skip;
+    switch (planes) {
+        case 1: c2p_lut_core(src, dst, width, height, src_pitch, dst_pitch, 1, lut); break;
+        case 2: c2p_lut_core(src, dst, width, height, src_pitch, dst_pitch, 2, lut); break;
+        case 4: c2p_lut_core(src, dst, width, height, src_pitch, dst_pitch, 4, lut); break;
+        case 8: c2p_lut_core(src, dst, width, height, src_pitch, dst_pitch, 8, lut); break;
+        default: break;
     }
 }
 
-void Atari_C2P_8to4(void *src, void *dst, int width, int height,
-                    int src_pitch, int dst_pitch)
-{
-    uint8_t *src_ptr = (uint8_t *)src;
-    uint16_t *dst_ptr = (uint16_t *)dst;
-    int y;
-    
-    int src_skip = src_pitch - width;
-    int dst_bytes_per_row = (width >> 4) * 8;
-    int dst_skip = (dst_pitch - dst_bytes_per_row) / 2;
-    
-    for (y = 0; y < height; y++) {
-        int x;
-        
-        for (x = 0; x < width; x += 16) {
-            uint16_t plane0 = 0;
-            uint16_t plane1 = 0;
-            uint16_t plane2 = 0;
-            uint16_t plane3 = 0;
-            int bit;
-            
-            for (bit = 15; bit >= 0; bit--) {
-                uint8_t pixel = *src_ptr++;
-                
-                if (pixel & 0x01) plane0 |= (1 << bit);
-                if (pixel & 0x02) plane1 |= (1 << bit);
-                if (pixel & 0x04) plane2 |= (1 << bit);
-                if (pixel & 0x08) plane3 |= (1 << bit);
-            }
-            
-            *dst_ptr++ = plane0;
-            *dst_ptr++ = plane1;
-            *dst_ptr++ = plane2;
-            *dst_ptr++ = plane3;
-        }
-        
-        src_ptr += src_skip;
-        dst_ptr += dst_skip;
-    }
-}
-
-void Atari_C2P_8to8(void *src, void *dst, int width, int height,
-                    int src_pitch, int dst_pitch)
-{
-    uint8_t *src_ptr = (uint8_t *)src;
-    uint16_t *dst_ptr = (uint16_t *)dst;
-    int y;
-    
-    int src_skip = src_pitch - width;
-    int dst_bytes_per_row = (width >> 4) * 16;
-    int dst_skip = (dst_pitch - dst_bytes_per_row) / 2;
-    
-    for (y = 0; y < height; y++) {
-        int x;
-        
-        for (x = 0; x < width; x += 16) {
-            uint16_t plane0 = 0, plane1 = 0, plane2 = 0, plane3 = 0;
-            uint16_t plane4 = 0, plane5 = 0, plane6 = 0, plane7 = 0;
-            int bit;
-            
-            for (bit = 15; bit >= 0; bit--) {
-                uint8_t pixel = *src_ptr++;
-                
-                if (pixel & 0x01) plane0 |= (1 << bit);
-                if (pixel & 0x02) plane1 |= (1 << bit);
-                if (pixel & 0x04) plane2 |= (1 << bit);
-                if (pixel & 0x08) plane3 |= (1 << bit);
-                if (pixel & 0x10) plane4 |= (1 << bit);
-                if (pixel & 0x20) plane5 |= (1 << bit);
-                if (pixel & 0x40) plane6 |= (1 << bit);
-                if (pixel & 0x80) plane7 |= (1 << bit);
-            }
-            
-            *dst_ptr++ = plane0;
-            *dst_ptr++ = plane1;
-            *dst_ptr++ = plane2;
-            *dst_ptr++ = plane3;
-            *dst_ptr++ = plane4;
-            *dst_ptr++ = plane5;
-            *dst_ptr++ = plane6;
-            *dst_ptr++ = plane7;
-        }
-        
-        src_ptr += src_skip;
-        dst_ptr += dst_skip;
-    }
-}
-
-/* --------------------------------------------------------------------
-   2-bit and 1-bit planar conversions
-   -------------------------------------------------------------------- */
-
-void Atari_C2P_8to2(void *src, void *dst, int width, int height,
-                    int src_pitch, int dst_pitch)
-{
-    uint8_t *src_ptr = (uint8_t *)src;
-    uint16_t *dst_ptr = (uint16_t *)dst;
-    int y;
-    
-    int src_skip = src_pitch - width;
-    int dst_bytes_per_row = (width >> 4) * 4;
-    int dst_skip = (dst_pitch - dst_bytes_per_row) / 2;
-    
-    for (y = 0; y < height; y++) {
-        int x;
-        
-        for (x = 0; x < width; x += 16) {
-            uint16_t plane0 = 0;
-            uint16_t plane1 = 0;
-            int bit;
-            
-            for (bit = 15; bit >= 0; bit--) {
-                uint8_t pixel = *src_ptr++;
-                
-                if (pixel & 0x01) plane0 |= (1 << bit);
-                if (pixel & 0x02) plane1 |= (1 << bit);
-            }
-            
-            *dst_ptr++ = plane0;
-            *dst_ptr++ = plane1;
-        }
-        
-        src_ptr += src_skip;
-        dst_ptr += dst_skip;
-    }
-}
-
-void Atari_C2P_8to1(void *src, void *dst, int width, int height,
-                    int src_pitch, int dst_pitch)
-{
-    uint8_t *src_ptr = (uint8_t *)src;
-    uint16_t *dst_ptr = (uint16_t *)dst;
-    int y;
-    
-    int src_skip = src_pitch - width;
-    int dst_bytes_per_row = (width >> 4) * 2;
-    int dst_skip = (dst_pitch - dst_bytes_per_row) / 2;
-    
-    for (y = 0; y < height; y++) {
-        int x;
-        
-        for (x = 0; x < width; x += 16) {
-            uint16_t plane0 = 0;
-            int bit;
-            
-            for (bit = 15; bit >= 0; bit--) {
-                uint8_t pixel = *src_ptr++;
-                
-                if (pixel & 0x01) plane0 |= (1 << bit);
-            }
-            
-            *dst_ptr++ = plane0;
-        }
-        
-        src_ptr += src_skip;
-        dst_ptr += dst_skip;
-    }
-}
-
-/* --------------------------------------------------------------------
-   CPU-Adaptive C2P Wrapper
-   
-   Automatically selects best implementation based on detected CPU
-   -------------------------------------------------------------------- */
-
-void Atari_C2P_Planar(void *src, void *dst, int width, int height, 
+/* Atari_C2P_Planar – always goes through the LUT path in pure-C mode.
+   Passing lut=NULL skips remapping (identity). */
+void Atari_C2P_Planar(void *src, void *dst, int width, int height,
                       int src_pitch, int dst_pitch, int planes)
 {
-    /* Use LUT on 68000/68010, shift-based on 68030+ */
-    int use_lut = (hw_info.cpu <= ATARI_CPU_68010);
-    
-    switch (planes) {
-        case 1:
-            Atari_C2P_8to1(src, dst, width, height, src_pitch, dst_pitch);
-            break;
-        case 2:
-            Atari_C2P_8to2(src, dst, width, height, src_pitch, dst_pitch);
-            break;
-        case 4:
-            if (use_lut) {
-                Atari_C2P_8to4_LUT(src, dst, width, height, src_pitch, dst_pitch);
-            } else {
-                Atari_C2P_8to4(src, dst, width, height, src_pitch, dst_pitch);
-            }
-            break;
-        case 8:
-            if (use_lut) {
-                Atari_C2P_8to8_LUT(src, dst, width, height, src_pitch, dst_pitch);
-            } else {
-                Atari_C2P_8to8(src, dst, width, height, src_pitch, dst_pitch);
-            }
-            break;
-        default:
-            /* Unsupported */
-            break;
-    }
+    Atari_C2P_Planar_LUT(src, dst, width, height,
+                         src_pitch, dst_pitch, planes, NULL);
 }
 
-/* --------------------------------------------------------------------
-   OPTIMIZED: Memory copy for TrueColor modes (16/24/32bpp)
-   -------------------------------------------------------------------- */
-
+/* ============================================================================
+   BlitFast – aligned 32-bit row copy for TrueColor modes
+   ============================================================================ */
 void Atari_BlitFast_c(void *dst, const void *src, int row_bytes,
-                    int rows, int pitch)
+                      int rows, int pitch)
 {
-    uint8_t *dst_base = (uint8_t *)dst;
-    const uint8_t *src_base = (const uint8_t *)src;
+    Uint8       *dp = (Uint8 *)dst;
+    const Uint8 *sp = (const Uint8 *)src;
     int row;
-    
+
     for (row = 0; row < rows; row++) {
-        uint8_t *dst_ptr = dst_base + row * pitch;
-        const uint8_t *src_ptr = src_base + row * pitch;
-        int bytes_copied = 0;
-        
-        /* Check alignment */
-        uintptr_t src_align = (uintptr_t)src_ptr & 3;
-        uintptr_t dst_align = (uintptr_t)dst_ptr & 3;
-        
-        if (src_align == 0 && dst_align == 0 && row_bytes >= 16) {
-            /* Both aligned - use 32-bit copies with 4x unroll */
-            int longs = row_bytes >> 2;
-            uint32_t *dst32 = (uint32_t *)dst_ptr;
-            const uint32_t *src32 = (const uint32_t *)src_ptr;
-            int i = 0;
-            
-            /* Unrolled loop - copy 16 bytes per iteration */
-            for (; i <= longs - 4; i += 4) {
-                dst32[i+0] = src32[i+0];
-                dst32[i+1] = src32[i+1];
-                dst32[i+2] = src32[i+2];
-                dst32[i+3] = src32[i+3];
+        Uint8       *d = dp + row * pitch;
+        const Uint8 *s = sp + row * pitch;
+        int bytes_left = row_bytes;
+        int i;
+
+        if (((uintptr_t)s & 3) == 0 && ((uintptr_t)d & 3) == 0 && bytes_left >= 16) {
+            Uint32       *d32 = (Uint32 *)d;
+            const Uint32 *s32 = (const Uint32 *)s;
+            int longs = bytes_left >> 2;
+
+            for (i = 0; i <= longs - 4; i += 4) {
+                d32[i]   = s32[i];
+                d32[i+1] = s32[i+1];
+                d32[i+2] = s32[i+2];
+                d32[i+3] = s32[i+3];
             }
-            
-            /* Remaining longs */
-            for (; i < longs; i++) {
-                dst32[i] = src32[i];
-            }
-            
-            bytes_copied = longs * 4;
-            dst_ptr = (uint8_t *)(dst32 + longs);
-            src_ptr = (const uint8_t *)(src32 + longs);
+            for (; i < longs; i++) d32[i] = s32[i];
+
+            d = (Uint8 *)(d32 + longs);
+            s = (const Uint8 *)(s32 + longs);
+            bytes_left &= 3;
         }
-        
-        /* Copy remaining bytes */
-        while (bytes_copied < row_bytes) {
-            *dst_ptr++ = *src_ptr++;
-            bytes_copied++;
-        }
+        while (bytes_left--) *d++ = *s++;
     }
 }
 
-/* Memcpy variant - may be faster with optimized C library */
-void Atari_BlitFast_Memcpy(void *dst, const void *src, int row_bytes,
-                           int rows, int pitch)
-{
-    uint8_t *dst_ptr = (uint8_t *)dst;
-    const uint8_t *src_ptr = (const uint8_t *)src;
-    int row;
-    
-    if (row_bytes == pitch) {
-        memcpy(dst_ptr, src_ptr, row_bytes * rows);
-        return;
-    }
-    
-    for (row = 0; row < rows; row++) {
-        memcpy(dst_ptr, src_ptr, row_bytes);
-        dst_ptr += pitch;
-        src_ptr += pitch;
-    }
-}
+#else /* SDL_GEM_C2P_ASM */
 
-void Atari_BlitFast_Aligned16(void *dst, const void *src, int row_bytes,
-                              int rows, int pitch)
-{
-    uint32_t *dst_ptr = (uint32_t *)dst;
-    const uint32_t *src_ptr = (const uint32_t *)src;
-    int row, i;
-    int longs_per_row = row_bytes >> 2;
-    
-    for (row = 0; row < rows; row++) {
-        i = longs_per_row;
-        while (i >= 4) {
-            dst_ptr[0] = src_ptr[0];
-            dst_ptr[1] = src_ptr[1];
-            dst_ptr[2] = src_ptr[2];
-            dst_ptr[3] = src_ptr[3];
-            dst_ptr += 4;
-            src_ptr += 4;
-            i -= 4;
-        }
-        
-        while (i > 0) {
-            *dst_ptr++ = *src_ptr++;
-            i--;
-        }
-        
-        dst_ptr = (uint32_t *)((uint8_t *)dst + (row + 1) * pitch);
-        src_ptr = (const uint32_t *)((const uint8_t *)src + (row + 1) * pitch);
-    }
-}
-#else
-
+/* When using ASM C2P, Atari_C2P_Planar dispatches to the LUT ASM variants
+   unconditionally – no cpu-level branch needed here, the caller (SDL_gemvideo)
+   should always supply the palette LUT. */
 void Atari_C2P_Planar(void *src, void *dst, int width, int height,
                       int src_pitch, int dst_pitch, int planes)
 {
     switch (planes) {
-        case 1:  C2P_8to1(src, dst, width, height, src_pitch, dst_pitch); break;
-        case 2:  C2P_8to2(src, dst, width, height, src_pitch, dst_pitch); break;
-        case 4:  C2P_8to4(src, dst, width, height, src_pitch, dst_pitch); break;
-        case 8:  C2P_8to8(src, dst, width, height, src_pitch, dst_pitch); break;
-        /* TrueColor géré ailleurs */
+        case 1: Atari_C2P_8to1_LUT_asm(src, dst, width, height, src_pitch, dst_pitch, NULL); break;
+        case 2: Atari_C2P_8to2_LUT_asm(src, dst, width, height, src_pitch, dst_pitch, NULL); break;
+        case 4: Atari_C2P_8to4_LUT_asm(src, dst, width, height, src_pitch, dst_pitch, NULL); break;
+        case 8: Atari_C2P_8to8_LUT_asm(src, dst, width, height, src_pitch, dst_pitch, NULL); break;
+        default: break;
     }
 }
-#endif
 
 void Atari_C2P_Planar_LUT(void *src, void *dst, int width, int height,
-                          int src_pitch, int dst_pitch, int planes, Uint8 *lut)
+                           int src_pitch, int dst_pitch,
+                           int planes, Uint8 *lut)
 {
-#ifdef SDL_GEM_C2P_ASM
     switch (planes) {
-        case 1:  Atari_C2P_8to1_LUT_asm(src, dst, width, height, src_pitch, dst_pitch, lut); break;
-        case 2:  Atari_C2P_8to2_LUT_asm(src, dst, width, height, src_pitch, dst_pitch, lut); break;
-        case 4:  Atari_C2P_8to4_LUT_asm(src, dst, width, height, src_pitch, dst_pitch, lut); break;
-        case 8:  Atari_C2P_8to8_LUT_asm(src, dst, width, height, src_pitch, dst_pitch, lut); break;
-        default: /* Unsupported */ break;
+        case 1: Atari_C2P_8to1_LUT_asm(src, dst, width, height, src_pitch, dst_pitch, lut); break;
+        case 2: Atari_C2P_8to2_LUT_asm(src, dst, width, height, src_pitch, dst_pitch, lut); break;
+        case 4: Atari_C2P_8to4_LUT_asm(src, dst, width, height, src_pitch, dst_pitch, lut); break;
+        case 8: Atari_C2P_8to8_LUT_asm(src, dst, width, height, src_pitch, dst_pitch, lut); break;
+        default: break;
     }
-#else
-    /* C fallback: row-by-row LUT + C2P for all modes */
-    {
-        Uint8 *remap;
-        Uint8 *src_ptr = (Uint8*)src;
-        Uint8 *dst_ptr = (Uint8*)dst;
-        int row, i;
-        
-        /* Allocate remap buffer on stack or use static */
-        remap = (Uint8*)SDL_malloc(width);
-        if (!remap) return;
-        
-        for (row = 0; row < height; row++) {
-            /* Apply LUT to this row */
-            for (i = 0; i < width; i++) {
-                remap[i] = lut[src_ptr[i]];
-            }
-            
-            /* C2P for this row */
-            switch (planes) {
-                case 1: Atari_C2P_8to1(remap, dst_ptr, width, 1, width, dst_pitch); break;
-                case 2: Atari_C2P_8to2(remap, dst_ptr, width, 1, width, dst_pitch); break;
-                case 4: Atari_C2P_8to4(remap, dst_ptr, width, 1, width, dst_pitch); break;
-                case 8: Atari_C2P_8to8(remap, dst_ptr, width, 1, width, dst_pitch); break;
-            }
-            
-            src_ptr += src_pitch;
-            dst_ptr += dst_pitch;
-        }
-        
-        SDL_free(remap);
-    }
-#endif
 }
+
+#endif /* SDL_GEM_C2P_ASM */

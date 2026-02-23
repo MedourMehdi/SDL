@@ -1,17 +1,43 @@
 /*
- * SDL_sysjoystick.c — Atari ST/STE/TT/Falcon joystick driver for SDL2
- *
- * Uses the XBIOS joystick vector (Kbdvbase()->joyvec) to receive
- * IKBD joystick packets asynchronously. The vector handler writes
- * Xbios_joystick; Update() reads it with no supervisor overhead.
- *
- * IKBD joystick byte bit layout (port 1, active-high):
- *   bit 0 = forward (up)
- *   bit 1 = back    (down)
- *   bit 2 = left
- *   bit 3 = right
- *   bit 7 = fire
- */
+  Simple DirectMedia Layer
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
+
+  This software is provided 'as-is', without any express or implied
+  warranty.  In no event will the authors be held liable for any damages
+  arising from the use of this software.
+
+  Permission is granted to anyone to use this software for any purpose,
+  including commercial applications, and to alter it and redistribute it
+  freely, subject to the following restrictions:
+
+  1. The origin of this software must not be misrepresented; you must not
+     claim that you wrote the original software. If you use this software
+     in a product, an acknowledgment in the product documentation would be
+     appreciated but is not required.
+  2. Altered source versions must be plainly marked as such, and must not be
+     misrepresented as being the original software.
+  3. This notice may not be removed or altered from any source distribution.
+*/
+
+/* ============================================================================
+   SDL_sysjoystick.c – Atari ST/STE/TT/Falcon joystick driver for SDL2
+   Medour Mehdi - 2026
+   Architecture: Motorola 68000 / Atari ST-TT-Falcon
+
+   Uses the XBIOS keyboard vector (Kbdvbase()->joyvec) to receive IKBD
+   joystick packets asynchronously at interrupt level. XbiosJoystickVector
+   writes Xbios_joystick; ATARI_JoystickUpdate() reads it from the main
+   thread with no supervisor overhead.
+
+   IKBD joystick byte bit layout (port 1, active-high, masked 0x8F):
+     bit 0 = forward (up)    bit 2 = left
+     bit 1 = back    (down)  bit 3 = right
+     bit 7 = fire
+
+   Exposes: 0 axes, 1 hat, 1 button (fire).
+
+   C90 compliant.
+   ============================================================================ */
 
 #include "../../SDL_internal.h"
 
@@ -30,8 +56,8 @@
  * 0x14 = enable joystick event reporting (mandatory — IKBD is silent by default)
  * 0x08 = restore relative mouse mode on quit
  * ----------------------------------------------------------------------- */
-static const char ikbd_joy_enable[]    = { 0x14 };
-static const char ikbd_mouse_restore[] = { 0x08 };
+// static const char ikbd_joy_enable[]    = { 0x14 };
+// static const char ikbd_mouse_restore[] = { 0x08 };
 
 /* -----------------------------------------------------------------------
  * Driver state

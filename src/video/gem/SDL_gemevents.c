@@ -1,54 +1,35 @@
-/* ============================================
-   FILE: src/video/gem/SDL_gemevents.c
-   GEM event handling - Optimized C90 version
+/*
+  Simple DirectMedia Layer
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
-   ============================================
-   KEYBOARD STRATEGY
-   ============================================
+  This software is provided 'as-is', without any express or implied
+  warranty.  In no event will the authors be held liable for any damages
+  arising from the use of this software.
 
-   GEM AES evnt_multi(MU_KEYBD) delivers only MAKE codes (key press
-   and autorepeat every ~30 ms).  Break codes (key release) are
-   stripped by GEM and never reach the application.  Direct hardware
-   access ($FFFC02 ACIA) causes a bus error in a GEM app.
+  Permission is granted to anyone to use this software for any purpose,
+  including commercial applications, and to alter it and redistribute it
+  freely, subject to the following restrictions:
 
-   TWO-PATH APPROACH:
+  1. The origin of this software must not be misrepresented; you must not
+     claim that you wrote the original software. If you use this software
+     in a product, an acknowledgment in the product documentation would be
+     appreciated but is not required.
+  2. Altered source versions must be plainly marked as such, and must not be
+     misrepresented as being the original software.
+  3. This notice may not be removed or altered from any source distribution.
+*/
 
-   1. GAME/MOVEMENT KEYS (arrows, WASD, Space)
-      SDL_PRESSED is sent once on the first make code.
-      key_frame_count[] counts frames since the last make code.
-      When it exceeds KEY_RELEASE_TIMEOUT (~1020 ms) without a new
-      make code, SDL_RELEASED is fired.
-      MU_TIMER keeps the pump ticking so AgeGameKeys() runs regularly.
+/* ============================================================================
+   SDL_gemevents.c – GEM event pump for SDL2
+   Medour Mehdi - 2026
+   Architecture: Motorola 68000 / Atari ST-TT-Falcon
 
-      KEY_RELEASE_TIMEOUT = 60 frames * 17 ms = ~1020 ms.
-      AES autorepeat (~30 ms) resets the counter well before that.
-      The wide window handles UP+LEFT held simultaneously: each key
-      has its own independent counter indexed by Atari scan code.
+   Responsibilities: AES event loop (evnt_multi), keyboard and mouse event
+   translation, window message dispatch (WM_REDRAW, WM_MOVED, WM_SIZED,
+   WM_CLOSED), and modifier state tracking via Kbshift().
 
-      DO NOT reduce KEY_RELEASE_TIMEOUT without testing diagonal input.
-
-   2. ALL OTHER KEYS (text, function keys, etc.)
-      Plain GEM pass-through: SDL_PRESSED then SDL_RELEASED on every
-      MU_KEYBD event.  Correct for typing and menu navigation.
-
-   MODIFIER KEYS (Shift, Ctrl, Alt)
-      Handled separately via Kbshift() (safe TOS system variable).
-      Never go through either path above.
-
-   IsGameKey() works on the SDL_Scancode returned by ATARI_MapScancode().
-   No raw Atari hex codes are duplicated here; SDL_gemkeys.c is the
-   single source of truth for the Atari->SDL scancode mapping.
-
-   ============================================
-   BUGS FIXED vs ORIGINAL:
-   - atari_scan bounds check: OOB write if scan >= 128
-   - Early return in MU_MESAG block dropped mouse + modifier events
-   - WM_SIZED passed border dimensions instead of work area size
-   - IsModifierKey() had SDL_LogDebug in the hot keyboard path
-   - Stale file-scope statics replaced with proper locals
-   - Dead variable any_keybd_this_frame removed
-   - GEM_InitEvents resets all persistent state, uses SDL_memset
-   ============================================ */
+   C90 compliant.
+   ============================================================================ */
 
 #include "../../SDL_internal.h"
 #include "SDL_gemvideo.h"
