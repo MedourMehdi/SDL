@@ -38,7 +38,7 @@
 
    C90 compliant.
    ============================================================================ */
-   
+
 #include "../../SDL_internal.h"
 
 #ifdef SDL_VIDEO_RENDER_GEM
@@ -153,39 +153,44 @@ static void GEM_OptimizedTextureCopy(SDL_Surface *texture_surface,
     if (texture_surface->format->format == dest_surface->format->format &&
         srcrect->w == dstrect->w &&
         srcrect->h == dstrect->h) {
+        if (texture_surface->format->Amask) {
+            /* Has alpha — use SDL_BlitSurface for correct blending */
+            SDL_BlitSurface(texture_surface, (SDL_Rect*)srcrect,
+                            dest_surface, dstrect);
+        } else {
+            /* Fast path: direct memcpy row by row */
+            int y;
+            const int bpp = texture_surface->format->BytesPerPixel;
+            const int row_bytes = srcrect->w * bpp;
+            const int src_pitch = texture_surface->pitch;
+            const int dst_pitch = dest_surface->pitch;
+            Uint8 *src;
+            Uint8 *dst;
+            int lock_mask = 0; /* bit 0 = src locked, bit 1 = dst locked */
 
-        /* Fast path: direct memcpy row by row */
-        int y;
-        const int bpp = texture_surface->format->BytesPerPixel;
-        const int row_bytes = srcrect->w * bpp;
-        const int src_pitch = texture_surface->pitch;
-        const int dst_pitch = dest_surface->pitch;
-        Uint8 *src;
-        Uint8 *dst;
-        int lock_mask = 0; /* bit 0 = src locked, bit 1 = dst locked */
+            if (SDL_MUSTLOCK(texture_surface)) {
+                SDL_LockSurface(texture_surface);
+                lock_mask |= 1;
+            }
+            if (SDL_MUSTLOCK(dest_surface)) {
+                SDL_LockSurface(dest_surface);
+                lock_mask |= 2;
+            }
 
-        if (SDL_MUSTLOCK(texture_surface)) {
-            SDL_LockSurface(texture_surface);
-            lock_mask |= 1;
+            src = (Uint8 *)texture_surface->pixels +
+                (srcrect->y * src_pitch) + (srcrect->x * bpp);
+            dst = (Uint8 *)dest_surface->pixels +
+                (dstrect->y * dst_pitch) + (dstrect->x * bpp);
+
+            for (y = 0; y < srcrect->h; y++) {
+                SDL_memcpy(dst, src, row_bytes);
+                src += src_pitch;
+                dst += dst_pitch;
+            }
+
+            if (lock_mask & 2) SDL_UnlockSurface(dest_surface);
+            if (lock_mask & 1) SDL_UnlockSurface(texture_surface);
         }
-        if (SDL_MUSTLOCK(dest_surface)) {
-            SDL_LockSurface(dest_surface);
-            lock_mask |= 2;
-        }
-
-        src = (Uint8 *)texture_surface->pixels +
-              (srcrect->y * src_pitch) + (srcrect->x * bpp);
-        dst = (Uint8 *)dest_surface->pixels +
-              (dstrect->y * dst_pitch) + (dstrect->x * bpp);
-
-        for (y = 0; y < srcrect->h; y++) {
-            SDL_memcpy(dst, src, row_bytes);
-            src += src_pitch;
-            dst += dst_pitch;
-        }
-
-        if (lock_mask & 2) SDL_UnlockSurface(dest_surface);
-        if (lock_mask & 1) SDL_UnlockSurface(texture_surface);
     } else {
         /* Slow path: format conversion or scaling needed.
          * This should only happen for textures created before the window
@@ -458,6 +463,7 @@ static int GEM_RunCommandQueue(SDL_Renderer *renderer, SDL_RenderCommand *cmd,
                                            cmd->data.color.b,
                                            cmd->data.color.a);
                 SDL_FillRect(surface, NULL, color);
+                data->force_full_update = SDL_TRUE;
                 data->surface_dirty = SDL_TRUE;
                 break;
             }
