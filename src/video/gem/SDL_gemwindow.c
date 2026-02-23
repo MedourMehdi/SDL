@@ -851,9 +851,12 @@ int GEM_UpdateWindowFramebuffer(SDL_VideoDevice *this, SDL_Window *window,
     
     if (change_detect_result == -1) {
         /* No new changes */
-        if (data->num_prev_dirty_rects > 0) {
+        if (video->planes <= 8 && data->num_prev_dirty_rects > 0) {
             rects_to_process = data->prev_dirty_rects;
             num_to_process = data->num_prev_dirty_rects;
+        } else if (video->planes > 8) {
+            rects_to_process = rects;
+            num_to_process = numrects;
         } else {
             return 0;
         }
