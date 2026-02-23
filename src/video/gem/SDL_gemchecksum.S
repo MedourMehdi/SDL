@@ -57,8 +57,8 @@
 _Atari_CalculateRowChecksum:
     movem.l d2-d6/a2,-(sp)
     
-    move.l  32(sp),a0
-    move.l  36(sp),d2
+    move.l  28(sp),a0         | Correct: parameter 1 (row pointer)
+    move.l  32(sp),d2         | Correct: parameter 2 (len)
     move.l  d2,d0
     moveq   #0,d1
     

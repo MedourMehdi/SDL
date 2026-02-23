@@ -231,8 +231,10 @@ extern Uint32 rgb332_to_argb8888_lut[256];
     extern Uint8 Atari_CalculateRowChecksum(const Uint8 *row, int len);
     extern Uint8 Atari_CalculateRowChecksum_320(const Uint8 *row);
     extern Uint8 Atari_CalculateRowChecksum_640(const Uint8 *row);
-    #define CALCULATE_ROW_CHECKSUM(r,l) \
-        ((l) == 320 ? Atari_CalculateRowChecksum_320(r) : Atari_CalculateRowChecksum(r,l))
+#define CALCULATE_ROW_CHECKSUM(r,l) \
+    ((l) == 320 ? Atari_CalculateRowChecksum_320(r) : \
+     (l) == 640 ? Atari_CalculateRowChecksum_640(r) : \
+     Atari_CalculateRowChecksum(r,l))
 #else
     #define CALCULATE_ROW_CHECKSUM(r,l) CalculateRowChecksum(r,l)
 #endif
