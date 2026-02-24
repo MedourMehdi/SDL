@@ -58,7 +58,7 @@
 #define SND_16BIT   0x04
 #define SND_8BIT    0x02
 #define _THIS SDL_AudioDevice *this
-#define NUM_CHUNKS 10  /* Safe distance requires multiple chunks */
+#define NUM_CHUNKS 4  /* Safe distance requires multiple chunks */
 
 typedef struct { int freq; int prescale; } FalconFreq;
 static const FalconFreq falcon_freq_table[] = {
@@ -68,7 +68,8 @@ static const FalconFreq falcon_freq_table[] = {
 
 struct SDL_PrivateAudioData {
     Uint8 *current_fill_ptr, *buffer_base, *buffer_end;
-    int chunk_size, playing, swap_needed, xor_needed, total_size;
+    int chunk_size, swap_needed, xor_needed, total_size;
+    volatile int playing;   /* written by stop/CloseDevice, read in WaitDevice spin */
 };
 
 /* --- Audio Conversions --- */
@@ -124,6 +125,31 @@ static inline void swap_audio_bytes_asm(Uint8 *ptr, int count)
 #define DMA_PTR_HIGH  ((volatile Uint8 *)0xFFFF8909)
 #define DMA_PTR_MID   ((volatile Uint8 *)0xFFFF890B)
 #define DMA_PTR_LOW   ((volatile Uint8 *)0xFFFF890D)
+
+
+/* read_dma_pos – atomic 3-byte read via double-sample.
+ *
+ * The Falcon DMA position is spread across three byte registers.  A single
+ * read sequence can straddle a hardware counter increment and produce a torn
+ * address.  Reading twice and comparing guarantees both samples were taken
+ * within the same counter state; on a 68000 the counter advances at most
+ * once per ~20 ns, so two consecutive reads that agree are always coherent.
+ * No interrupt masking required.
+ */
+static Uint8 *read_dma_pos(const struct SDL_PrivateAudioData *hidden)
+{
+    Uint32 a, b;
+    do {
+        a = ((Uint32)*DMA_PTR_HIGH << 16) |
+            ((Uint32)*DMA_PTR_MID  <<  8) |
+             (Uint32)*DMA_PTR_LOW;
+        b = ((Uint32)*DMA_PTR_HIGH << 16) |
+            ((Uint32)*DMA_PTR_MID  <<  8) |
+             (Uint32)*DMA_PTR_LOW;
+    } while (a != b);
+    (void)hidden; /* parameter reserved for future range-check */
+    return (Uint8 *)a;
+}
 
 /* --- Hardware Setup --- */
 static void mint_audio_open_hw(SDL_AudioDevice *device, SDL_AudioSpec *spec)
@@ -232,32 +258,49 @@ static void ATARI_CloseDevice(SDL_AudioDevice *device)
 }
 
 /* 
- * WaitDevice - DROP PREVENTION: DMA must be 2+ chunks ahead
+* WaitDevice – DROP PREVENTION
+*
+* We spin until the DMA playhead is at least 2 chunks ahead of the fill
+* pointer, giving us one full chunk of write headroom.
+*
+* Equal-offset edge case: if fill_offset == dma_offset the circular
+* distance formula would yield total_size (a full lap), which looks like
+* the buffer is completely free — dangerously wrong at startup before the
+* DMA has advanced.  We treat distance == 0 (or distance == total_size,
+* same thing mod wrap) as "not yet safe" by clamping it to 0.
+*
+* CloseDevice race: `playing` is volatile so the compiler cannot hoist the
+* load out of the loop; the store in mint_audio_stop_hw is immediately
+* visible to this thread on 68000 (coherent store-load on a single core).
  */
 static void ATARI_WaitDevice(_THIS)
 {
     struct SDL_PrivateAudioData *hidden = this->hidden;
-    Uint8 *dma_pos;
     Uint32 dma_offset, fill_offset;
     int32_t distance;
     
     fill_offset = hidden->current_fill_ptr - hidden->buffer_base;
     
     while (hidden->playing) {
-        dma_pos = (Uint8 *)(((Uint32)*DMA_PTR_HIGH << 16) | 
-                         ((Uint32)*DMA_PTR_MID  << 8)  | 
-                          (Uint32)*DMA_PTR_LOW);
         
-        dma_offset = dma_pos - hidden->buffer_base;
+        dma_offset = read_dma_pos(hidden) - hidden->buffer_base;
         distance = (int32_t)dma_offset - (int32_t)fill_offset;
         
-        /* Wraparound-safe distance */
-        if (distance < 0) distance += hidden->total_size;
-        
-        /* DMA must be at least 2 chunks ahead to prevent underrun */
-        if (distance >= (hidden->chunk_size * 2)) {
-            break; /* Safe to fill */
-        }
+       /* Wraparound correction: negative distance means DMA wrapped */
+       if (distance < 0) {
+           distance += hidden->total_size;
+            }
+
+       /* Equal-offset guard: distance == 0 means fill == DMA (startup or
+        * exact lap).  Treat as 0, not total_size, so we never skip the wait. */
+       if (distance == 0) {
+           pthread_yield();
+           continue;
+       }
+
+       if (distance >= (hidden->chunk_size * 2)) {
+           break;  /* Safe window: at least 2 chunks before playhead catches us */
+       }
         
         pthread_yield(); /* FreeMiNT optimization */
     }
