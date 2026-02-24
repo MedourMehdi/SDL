@@ -116,19 +116,6 @@ static int GEM_QueueFillRects(SDL_Renderer *renderer, SDL_RenderCommand *cmd,
 static int GEM_QueueCopy(SDL_Renderer *renderer, SDL_RenderCommand *cmd,
                          SDL_Texture *texture, const SDL_Rect *srcrect,
                          const SDL_FRect *dstrect);
-static int GEM_QueueCopyEx(SDL_Renderer *renderer, SDL_RenderCommand *cmd,
-                            SDL_Texture *texture, const SDL_Rect *srcrect,
-                            const SDL_FRect *dstrect, const double angle,
-                            const SDL_FPoint *center, const SDL_RendererFlip flip,
-                            float scale_x, float scale_y);
-static int GEM_QueueGeometry(SDL_Renderer *renderer, SDL_RenderCommand *cmd,
-                              SDL_Texture *texture,
-                              const float *xy, int xy_stride,
-                              const SDL_Color *color, int color_stride,
-                              const float *uv, int uv_stride,
-                              int num_vertices, const void *indices,
-                              int num_indices, int size_indices,
-                              float scale_x, float scale_y);
 static int GEM_RunCommandQueue(SDL_Renderer *renderer, SDL_RenderCommand *cmd,
                                 void *vertices, size_t vertsize);
 static int GEM_RenderReadPixels(SDL_Renderer *renderer, const SDL_Rect *rect,
@@ -671,8 +658,8 @@ static int GEM_CreateRenderer(SDL_Renderer *renderer, SDL_Window *window, Uint32
     renderer->QueueDrawLines    = GEM_QueueDrawLines;
     renderer->QueueFillRects    = GEM_QueueFillRects;
     renderer->QueueCopy         = GEM_QueueCopy;
-    renderer->QueueCopyEx       = GEM_QueueCopyEx;
-    renderer->QueueGeometry     = GEM_QueueGeometry;
+    renderer->QueueCopyEx       = NULL;  /* SDL will emulate with geometry */
+    renderer->QueueGeometry     = NULL;  /* SDL will handle in software */
     renderer->RunCommandQueue   = GEM_RunCommandQueue;
     renderer->RenderReadPixels  = GEM_RenderReadPixels;
     renderer->RenderPresent     = GEM_RenderPresent;
@@ -1094,33 +1081,6 @@ static int GEM_QueueCopy(SDL_Renderer *renderer, SDL_RenderCommand *cmd,
     verts[1].w = (int)dstrect->w; verts[1].h = (int)dstrect->h;
     cmd->data.draw.count = 2;
     return 0;
-}
-
-static int GEM_QueueCopyEx(SDL_Renderer *renderer, SDL_RenderCommand *cmd,
-                            SDL_Texture *texture, const SDL_Rect *srcrect,
-                            const SDL_FRect *dstrect, const double angle,
-                            const SDL_FPoint *center, const SDL_RendererFlip flip,
-                            float scale_x, float scale_y)
-{
-    (void)renderer; (void)cmd; (void)texture; (void)srcrect; (void)dstrect;
-    (void)angle; (void)center; (void)flip; (void)scale_x; (void)scale_y;
-    return 0;
-}
-
-static int GEM_QueueGeometry(SDL_Renderer *renderer, SDL_RenderCommand *cmd,
-                              SDL_Texture *texture,
-                              const float *xy, int xy_stride,
-                              const SDL_Color *color, int color_stride,
-                              const float *uv, int uv_stride,
-                              int num_vertices, const void *indices,
-                              int num_indices, int size_indices,
-                              float scale_x, float scale_y)
-{
-    (void)renderer; (void)cmd; (void)texture;
-    (void)xy; (void)xy_stride; (void)color; (void)color_stride;
-    (void)uv; (void)uv_stride; (void)num_vertices; (void)indices;
-    (void)num_indices; (void)size_indices; (void)scale_x; (void)scale_y;
-    return SDL_Unsupported();
 }
 
 /* ============================================================================
