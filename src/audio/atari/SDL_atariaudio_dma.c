@@ -29,9 +29,15 @@
    directly and yields via pthread_yield() when too close to the playhead.
 
    Buffer strategy:
-     - 10-chunk circular buffer allocated in ST-RAM (Mxalloc)
-     - Fill pointer advances one chunk per callback
-     - WaitDevice blocks until DMA is >= 2 chunks ahead (wrap-safe distance)
+    - $(NUM_CHUNKS)-chunk circular buffer allocated in ST-RAM (Mxalloc)
+    - Fill pointer advances one chunk per callback
+    - DMA position read via double-sample loop (read_dma_pos) to avoid
+      torn values across the three byte-wide hardware registers
+    - WaitDevice blocks until DMA is >= 2 chunks ahead of the fill pointer
+      (wraparound-safe circular distance, equal-offset treated as 0 not
+      total_size to prevent a false "fully free" reading at startup)
+    - `playing` is volatile: prevents the compiler hoisting the load out of
+      the WaitDevice spin loop when CloseDevice races to clear it
 
    Format handling:
      - 16-bit: S16MSB native; S16LSB triggers inline byte-swap (asm, 8w/iter)
@@ -73,7 +79,7 @@ struct SDL_PrivateAudioData {
 };
 
 /* --- Audio Conversions --- */
-static void convert_u8_s8(Uint8 *ptr, int count)
+static void convert_sign_bit(Uint8 *ptr, int count)
 {
     Uint32 *p32 = (Uint32 *)ptr;
     int c32 = count >> 2;
@@ -125,7 +131,6 @@ static inline void swap_audio_bytes_asm(Uint8 *ptr, int count)
 #define DMA_PTR_HIGH  ((volatile Uint8 *)0xFFFF8909)
 #define DMA_PTR_MID   ((volatile Uint8 *)0xFFFF890B)
 #define DMA_PTR_LOW   ((volatile Uint8 *)0xFFFF890D)
-
 
 /* read_dma_pos – atomic 3-byte read via double-sample.
  *
@@ -205,20 +210,8 @@ static void mint_audio_open_hw(SDL_AudioDevice *device, SDL_AudioSpec *spec)
 static void mint_audio_start_hw(SDL_AudioDevice *device)
 {
     struct SDL_PrivateAudioData *hidden = device->hidden;
-    int i;
-    Uint8 *chunk_ptr;
     
     if (!hidden->playing) {
-        for (i = 0; i < NUM_CHUNKS; i++) {
-            chunk_ptr = hidden->buffer_base + (i * hidden->chunk_size);
-            if (device->callbackspec.callback) {
-                device->callbackspec.callback(device->callbackspec.userdata, 
-                                             chunk_ptr, hidden->chunk_size);
-                if (hidden->swap_needed) swap_audio_bytes_asm(chunk_ptr, hidden->chunk_size);
-                else if (hidden->xor_needed) convert_u8_s8(chunk_ptr, hidden->chunk_size);
-            }
-        }
-
         Setbuffer(SR_PLAY, hidden->buffer_base, hidden->buffer_end);
         hidden->playing = 1;
         hidden->current_fill_ptr = hidden->buffer_base;
@@ -317,7 +310,7 @@ static void ATARI_PlayDevice(_THIS)
     Uint8 *filled_chunk = hidden->current_fill_ptr;
     
     if (hidden->swap_needed) swap_audio_bytes_asm(filled_chunk, hidden->chunk_size);
-    else if (hidden->xor_needed) convert_u8_s8(filled_chunk, hidden->chunk_size);
+    else if (hidden->xor_needed) convert_sign_bit(filled_chunk, hidden->chunk_size);
     
     hidden->current_fill_ptr += hidden->chunk_size;
     if (hidden->current_fill_ptr >= hidden->buffer_end) {
@@ -332,6 +325,7 @@ static int ATARI_OpenDevice(SDL_AudioDevice *device, const char *devname)
     SDL_memset(device->hidden, 0, sizeof(*device->hidden));
 
     mint_audio_open_hw(device, &device->spec);
+    if (!device->hidden->buffer_base) return -1;
     mint_audio_start_hw(device);
     return 0;
 }
