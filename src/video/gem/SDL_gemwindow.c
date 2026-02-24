@@ -274,7 +274,11 @@ static int DetectChangesAndBuildRect(SDL_WindowData *data,
                 last_changed = y;
             }
         }
-        /* CRITICAL: DO NOT update data->row_checksums here - done after blit */
+        if (first_changed == -1) {
+            SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,"No changes detected");
+            return -1;
+        }        
+        /* DO NOT update data->row_checksums here - done after blit */
         goto have_result;
     }
     /* Fall through to C path if not full-screen or no batch buffer */
@@ -630,7 +634,7 @@ static void ProcessRemapPath(SDL_VideoData *video, SDL_WindowData *data,
                              int src_x, int src_y, int src_w, int src_h,
                              Uint8 *src_base, Uint8 *dst_base, int col_offset)
 {
-    int y, row, i, aligned_width;
+    int row, i, aligned_width;
     Uint8 *remap, *lut, *src, *dst;
     const int src_skip = data->buffer_pitch;
     const int dst_skip = data->total_line_bytes;
@@ -639,10 +643,10 @@ static void ProcessRemapPath(SDL_VideoData *video, SDL_WindowData *data,
     lut = video->rgb332_to_hw;
     aligned_width = (src_w + 15) & ~15;
     
+    src = src_base + (src_y * src_skip) + src_x;
+    dst = dst_base + (src_y * dst_skip) + col_offset;
+
     for (row = 0; row < src_h; row++) {
-        y = src_y + row;
-        src = src_base + (y * src_skip) + src_x;
-        dst = dst_base + (y * dst_skip) + col_offset;
         
         /* Apply LUT */
         for (i = 0; i < src_w; i++) {
@@ -657,6 +661,10 @@ static void ProcessRemapPath(SDL_VideoData *video, SDL_WindowData *data,
         /* C2P for this row */
         Atari_C2P_Planar(remap, dst, src_w, 1,
                         data->aligned_w, dst_skip, video->planes);
+
+        /* Advance to next row — add only, no multiply */
+        src += src_skip;
+        dst += dst_skip;                        
     }
 }
 #endif /* SDL_GEM_C2P_ASM */

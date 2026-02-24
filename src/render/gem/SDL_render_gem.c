@@ -956,10 +956,10 @@ static void GEM_UnlockTexture(SDL_Renderer *renderer, SDL_Texture *texture)
                                                     src_pitch, surface->pitch);
                     break;
                 default:
-+                    /* Falcon TrueColor: SDL handles BGRA8888->any correctly */
-+                    SDL_ConvertPixels(data->lock_rect.w, data->lock_rect.h,
-+                                      SDL_PIXELFORMAT_BGRA8888, src, src_pitch,
-+                                      surface->format->format, dst_base, surface->pitch);
+                    /* Falcon TrueColor: SDL handles BGRA8888->any correctly */
+                    SDL_ConvertPixels(data->lock_rect.w, data->lock_rect.h,
+                                      SDL_PIXELFORMAT_BGRA8888, src, src_pitch,
+                                      surface->format->format, dst_base, surface->pitch);
                     break;
             }
         } else if (data->src_format == SDL_PIXELFORMAT_RGB332) {
@@ -1046,6 +1046,7 @@ static int GEM_QueueDrawPoints(SDL_Renderer *renderer, SDL_RenderCommand *cmd,
                                                                   0, &cmd->data.draw.first);
     if (!verts) return -1;
     SDL_memcpy(verts, points, count * sizeof(SDL_FPoint));
+    cmd->data.draw.count = count;
     return 0;
 }
 
@@ -1057,6 +1058,7 @@ static int GEM_QueueDrawLines(SDL_Renderer *renderer, SDL_RenderCommand *cmd,
                                                                   0, &cmd->data.draw.first);
     if (!verts) return -1;
     SDL_memcpy(verts, points, count * sizeof(SDL_FPoint));
+    cmd->data.draw.count = count;
     return 0;
 }
 
@@ -1068,6 +1070,7 @@ static int GEM_QueueFillRects(SDL_Renderer *renderer, SDL_RenderCommand *cmd,
                                                                 0, &cmd->data.draw.first);
     if (!verts) return -1;
     SDL_memcpy(verts, rects, count * sizeof(SDL_FRect));
+    cmd->data.draw.count = count;
     return 0;
 }
 
@@ -1089,7 +1092,7 @@ static int GEM_QueueCopy(SDL_Renderer *renderer, SDL_RenderCommand *cmd,
 
     verts[1].x = (int)dstrect->x; verts[1].y = (int)dstrect->y;
     verts[1].w = (int)dstrect->w; verts[1].h = (int)dstrect->h;
-
+    cmd->data.draw.count = 2;
     return 0;
 }
 
