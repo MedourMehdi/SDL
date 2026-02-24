@@ -585,10 +585,23 @@ int GEM_CreateWindowFramebuffer(SDL_VideoDevice *this, SDL_Window *window,
     }
     
     /* Allocate final buffer */
-    if (!AllocateAlignedBuffer(&data->raw_final_buffer, &data->final_buffer, planar_size)) {
-        FreeWindowBuffers(data);
-        return SDL_OutOfMemory();
-    }
+    // if (!AllocateAlignedBuffer(&data->raw_final_buffer, &data->final_buffer, planar_size)) {
+    //     FreeWindowBuffers(data);
+    //     return SDL_OutOfMemory();
+    // }
+
+    if (planes <= 8) {
+        /* Planar needs separate final_buffer for C2P output */
+        if (!AllocateAlignedBuffer(&data->raw_final_buffer, &data->final_buffer, planar_size)) {
+            FreeWindowBuffers(data);
+            return SDL_OutOfMemory();
+        }
+    } else {
+        /* TrueColor: MFDB points directly at buffer, no final_buffer needed */
+        data->final_buffer = data->buffer;
+        data->raw_final_buffer = NULL;   /* don't free — same as buffer */
+    }    
+
     data->final_buffer_size = planar_size;
     
     /* Allocate remap buffer if needed */
@@ -602,9 +615,22 @@ int GEM_CreateWindowFramebuffer(SDL_VideoDevice *this, SDL_Window *window,
     }
     
     /* Initialize MFDB */
-    InitializeMFDB(&data->final_mfdb, data->final_buffer, w, h, 
-                   data->aligned_w, planes);
-    
+
+    // InitializeMFDB(&data->final_mfdb, data->final_buffer, w, h, 
+    //                data->aligned_w, planes);
+
+    if (planes <= 8) {
+        /* Planar: final_buffer holds C2P output, keep separate */
+        InitializeMFDB(&data->final_mfdb, data->final_buffer, w, h,
+                       data->aligned_w, planes);
+    } else {
+        /* TrueColor: buffer is already in native format, point MFDB directly
+         * at it — final_buffer allocation is still needed as a scratch pad
+         * for partial blits but not as the VDI source */
+        InitializeMFDB(&data->final_mfdb, data->buffer, w, h,
+                       data->aligned_w, planes);
+    }
+
     data->buffer_pitch = (unsigned short)(*pitch);
     *format = new_format;
     *pixels = data->buffer;
@@ -676,7 +702,7 @@ static void BlitRegionOptimized(SDL_VideoData *video, SDL_WindowData *data,
     short pxy[8];
     const int vh = video->vdi_handle;
     const int planes = video->planes;
-    int col_offset, bpp;
+    int col_offset;
     Uint8 *src_base, *dst_base, *src, *dst;
     
     if (planes <= 8) {
@@ -710,15 +736,16 @@ static void BlitRegionOptimized(SDL_VideoData *video, SDL_WindowData *data,
         pxy[3] = (short)(src_y + src_h - 1);
     } else {
         /* TrueColor */
-        bpp = planes >> 3;
+        // bpp = planes >> 3;
         
-        src = (Uint8*)data->buffer + 
-              (src_y * data->buffer_pitch) + (src_x * bpp);
-        dst = (Uint8*)data->final_buffer +
-              (src_y * data->buffer_pitch) + (src_x * bpp);
+        // src = (Uint8*)data->buffer + 
+        //       (src_y * data->buffer_pitch) + (src_x * bpp);
+        // dst = (Uint8*)data->final_buffer +
+        //       (src_y * data->buffer_pitch) + (src_x * bpp);
         
-        BlitFast(dst, src, src_w * bpp, src_h, data->buffer_pitch);
+        // BlitFast(dst, src, src_w * bpp, src_h, data->buffer_pitch);
         
+        /* MFDB already points at buffer — no copy needed */
         pxy[0] = (short)src_x;
         pxy[1] = (short)src_y;
         pxy[2] = (short)(src_x + src_w - 1);
