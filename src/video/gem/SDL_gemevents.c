@@ -37,12 +37,11 @@
 
 #ifdef SDL_VIDEO_DRIVER_GEM
 
-/*
- * Release timeout for game/movement keys only.
- * 60 frames * 17 ms = ~1020 ms.  Must be >> AES autorepeat (~30 ms).
- */
-#define KEY_RELEASE_TIMEOUT 60
-#define TIMER_MS            17   /* 1000 / 60 Hz = 16.67 ms, rounded up */
+/* Release timeout for ALL keys.
+ * AES autorepeat fires every ~30-50 ms.  4 frames @ 17 ms = 68 ms gives a
+ * comfortable margin without perceptible input lag on release. */
+#define KEY_RELEASE_TIMEOUT  4
+#define TIMER_MS            17
 
 /* ============================================
    Persistent state (survives between pump calls)
@@ -57,12 +56,10 @@ static short mb                = 0;
 /* Keyboard */
 static Uint16 last_mod_state = 0;
 
-/*
- * key_state_map[scan]   = 1 when SDL has been told this key is PRESSED.
+/* key_state_map[scan]   = 1 when SDL has been told this key is PRESSED.
  * key_frame_count[scan] = frames since the last make code for this key.
- * Indexed by Atari scan code (0x01-0x72, max < 128).
- * Only written for keys where IsGameKey() returns 1.
- */
+ * Indexed by Atari scan code (0x01-0x7F, max < 128).
+ * Used for ALL non-modifier keys so simultaneous presses work correctly. */
 static unsigned char key_state_map[128]   = {0};
 static unsigned char key_frame_count[128] = {0};
 
@@ -76,32 +73,6 @@ static int IsModifierKey(SDL_Scancode sc)
             sc == SDL_SCANCODE_RSHIFT ||
             sc == SDL_SCANCODE_LCTRL  ||
             sc == SDL_SCANCODE_LALT);
-}
-
-/* ============================================
-   IsGameKey
-   Returns 1 for keys that need hold-detection (movement / game keys).
-   Decision is made on the SDL_Scancode so no raw Atari codes are
-   duplicated here; ATARI_MapScancode() in SDL_gemkeys.c is the
-   single source of truth for the Atari->SDL mapping.
-   Add SDL scancodes here to extend the set.
-   ============================================ */
-static int IsGameKey(SDL_Scancode sc)
-{
-    switch (sc) {
-        case SDL_SCANCODE_UP:
-        case SDL_SCANCODE_DOWN:
-        case SDL_SCANCODE_LEFT:
-        case SDL_SCANCODE_RIGHT:
-        case SDL_SCANCODE_W:
-        case SDL_SCANCODE_A:
-        case SDL_SCANCODE_S:
-        case SDL_SCANCODE_D:
-        case SDL_SCANCODE_SPACE:
-            return 1;
-        default:
-            return 0;
-    }
 }
 
 /* ============================================
@@ -127,22 +98,19 @@ void GEM_QuitEvents(_THIS)
    HandleKeyboard
    Called on each MU_KEYBD event (always a make code under GEM).
 
-   Game keys:  track state, send PRESSED once, absorb autorepeat.
-               RELEASED is sent by AgeGameKeys() on timeout.
-   Other keys: plain GEM pass-through - PRESSED then RELEASED.
+   ALL keys use the same timeout-based hold detection so that any
+   combination of keys can be held simultaneously.  Text input is
+   emitted on the first make code only (no duplicate characters on
+   autorepeat).  RELEASED is always fired by AgeGameKeys() on timeout.
    ============================================ */
 static void HandleKeyboard(short key_state_word)
 {
     Uint8        atari_scan;
     SDL_Scancode scancode;
-    char         ascii_char[2];
 
     atari_scan = (Uint8)((key_state_word >> 8) & 0xFF);
 
-    /* FIXED: guard against OOB write - arrays are 128 entries */
     if (atari_scan == 0 || atari_scan >= 128) {
-        SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
-                     "GEM: scan 0x%02X out of range, ignored", (int)atari_scan);
         return;
     }
 
@@ -151,53 +119,37 @@ static void HandleKeyboard(short key_state_word)
         return;
     }
 
-    SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "GEM: scan=0x%02X sdl=%d",
-                 (int)atari_scan, (int)scancode);
-
-    /* Modifiers handled separately by HandleModifiers() via Kbshift() */
     if (IsModifierKey(scancode)) {
         return;
     }
 
-    if (IsGameKey(scancode)) {
-        /*
-         * Game key: hold-detection via frame timeout.
-         * Reset counter to prove key is still alive.
-         * Send PRESSED only on the first make code; absorb autorepeat.
-         * RELEASED is fired by AgeGameKeys() when make codes stop.
-         */
-        key_frame_count[atari_scan] = 0;
+    /* Reset the aging counter — proves this key is still physically held.
+     * This is the make code; RELEASED will be sent by AgeGameKeys() once
+     * no further make codes arrive within KEY_RELEASE_TIMEOUT frames. */
+    key_frame_count[atari_scan] = 0;
 
-        if (!key_state_map[atari_scan]) {
-            key_state_map[atari_scan] = 1;
-            SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
-                         "GEM: game key down sdl=%d", (int)scancode);
-            SDL_SendKeyboardKey(SDL_PRESSED, scancode);
-        }
-    } else {
-        /*
-         * Regular key: plain GEM pass-through.
-         * Fire PRESSED then immediately RELEASED on every make code.
-         */
+    if (!key_state_map[atari_scan]) {
+        /* First make code: send PRESSED and text (if printable). */
+        char ascii_char[2];
+        key_state_map[atari_scan] = 1;
+        SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
+                     "GEM: key down scan=0x%02X sdl=%d", (int)atari_scan, (int)scancode);
         SDL_SendKeyboardKey(SDL_PRESSED, scancode);
 
         ascii_char[0] = (char)(key_state_word & 0xFF);
         ascii_char[1] = '\0';
         if (ascii_char[0] >= 32 && ascii_char[0] <= 126) {
-            SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
-                         "GEM: text '%s'", ascii_char);
             SDL_SendKeyboardText(ascii_char);
         }
-
-        SDL_SendKeyboardKey(SDL_RELEASED, scancode);
+        /* Autorepeat make codes are silently absorbed: no duplicate text,
+         * no duplicate PRESSED events, counter reset above keeps key alive. */
     }
 }
 
 /* ============================================
    AgeGameKeys
-   Run every pump cycle - the only way to detect release of game keys.
-   Iterates the full key_state_map; only game keys are ever set in it
-   so non-game-key slots are always 0 and skipped instantly.
+   Run every pump cycle — the only way to detect key release under GEM.
+   Now covers ALL keys, not just movement keys.
    ============================================ */
 static void AgeGameKeys(void)
 {
