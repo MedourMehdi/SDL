@@ -714,7 +714,7 @@ static int GEM_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture)
         // if (win_surf &&
         //     texture->format == SDL_PIXELFORMAT_RGB332 &&
         //     win_surf->format->format != SDL_PIXELFORMAT_RGB332) {
-        if (win_surf && texture->format != win_surf->format->format) {        
+        if (win_surf && texture->format != win_surf->format->format && texture->format != SDL_PIXELFORMAT_ARGB8888) {        
             surface_format = win_surf->format->format;
         }
     }
@@ -793,7 +793,7 @@ static int GEM_UpdateTexture(SDL_Renderer *renderer, SDL_Texture *texture,
     if (data->src_format == SDL_PIXELFORMAT_BGRX8888 || data->src_format == SDL_PIXELFORMAT_BGRA8888) {
         switch (surface->format->format) {
             case SDL_PIXELFORMAT_RGB332:
-                Atari_ConvertBGRA8888toRGB332(src, dst_base, rect->w, rect->h,
+                Atari_ConvertARGB8888toRGB332(src, dst_base, rect->w, rect->h,
                                               pitch, surface->pitch);
                 converted = 1;
                 break;
@@ -949,7 +949,7 @@ static void GEM_UnlockTexture(SDL_Renderer *renderer, SDL_Texture *texture)
         if (data->src_format == SDL_PIXELFORMAT_BGRX8888 || data->src_format == SDL_PIXELFORMAT_BGRA8888) {
             switch (surface->format->format) {
                 case SDL_PIXELFORMAT_RGB332:
-                    Atari_ConvertBGRA8888toRGB332(src, dst_base,
+                    Atari_ConvertARGB8888toRGB332(src, dst_base,
                                                     data->lock_rect.w, data->lock_rect.h,
                                                     src_pitch, surface->pitch);
                     break;
