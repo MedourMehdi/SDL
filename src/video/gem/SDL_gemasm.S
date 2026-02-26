@@ -507,6 +507,189 @@ _Atari_ConvertBGRA8888toRGB332_asm:
     rts
 
 | ============================================================================
+| Atari_ConvertARGB8888toRGB332_asm
+|
+| C: void Atari_ConvertARGB8888toRGB332_asm(const Uint8 *src, Uint8 *dst,
+|                                           int width, int height,
+|                                           int src_pitch, int dst_pitch)
+|
+| ARGB8888 in memory: [A][R][G][B] — loaded byte by byte, endian-safe.
+| Quantize: R3=(R>>5), G3=(G>>5), B2=(B>>6)
+| Pack:     (R3<<5) | (G3<<2) | B2
+|
+| Register save: split movem d2-d7 / a2-a6 → parameters at offset 48.
+| d0-d2: pixel components (low byte used only — upper bits harmless)
+| d4:    width, d5: height, d6: pixel loop counter
+| a0:    src, a1: dst, a2: src_skip (bytes), a3: dst_skip (bytes)
+| ============================================================================
+
+    .globl  _Atari_ConvertARGB8888toRGB332_asm
+
+_Atari_ConvertARGB8888toRGB332_asm:
+    movem.l d2-d7,-(sp)
+    movem.l a2-a6,-(sp)
+
+    move.l  48(sp),a0               | a0 = src
+    move.l  52(sp),a1               | a1 = dst
+    move.l  56(sp),d4               | d4 = width
+    move.l  60(sp),d5               | d5 = height
+    move.l  64(sp),a2               | a2 = src_pitch (bytes)
+    move.l  68(sp),a3               | a3 = dst_pitch (bytes)
+
+    | src_skip = src_pitch - width*4
+    move.l  d4,d0
+    lsl.l   #2,d0                   | width * 4
+    sub.l   d0,a2                   | a2 = src_skip
+
+    | dst_skip = dst_pitch - width
+    sub.l   d4,a3                   | a3 = dst_skip
+
+    subq.l  #1,d5
+    bmi.s   .argb_exit_1
+
+.argb_row_1:
+    move.l  d4,d6
+    subq.l  #1,d6
+
+.argb_pixel:
+    | Memory layout: [A][R][G][B]
+    addq.l  #1,a0                   | skip A (byte 0)
+
+    move.b  (a0)+,d2                | d2[7:0] = R (byte 1)
+    lsr.b   #5,d2
+    lsl.b   #5,d2                   | d2 = (R >> 5) << 5
+
+    move.b  (a0)+,d1                | d1[7:0] = G (byte 2)
+    lsr.b   #5,d1
+    lsl.b   #2,d1                   | d1 = (G >> 5) << 2
+
+    move.b  (a0)+,d0                | d0[7:0] = B (byte 3)
+    lsr.b   #6,d0                   | d0 = B >> 6  (2 bits: 0-3)
+
+    or.b    d1,d2                   | d2 = (R<<5) | (G<<2)
+    or.b    d0,d2                   | d2 = (R<<5) | (G<<2) | B
+    move.b  d2,(a1)+                | store RGB332 byte
+
+    dbra    d6,.argb_pixel
+
+    add.l   a2,a0                   | src += src_skip
+    add.l   a3,a1                   | dst += dst_skip
+    dbra    d5,.argb_row_1
+
+.argb_exit_1:
+    movem.l (sp)+,a2-a6
+    movem.l (sp)+,d2-d7
+    rts
+
+| ============================================================================
+| Atari_ConvertRGB332toBGRA8888_asm
+|
+| C: void Atari_ConvertRGB332toBGRA8888_asm(const Uint8 *src, Uint8 *dst,
+|                                           int width, int height,
+|                                           int src_pitch, int dst_pitch)
+|
+| RGB332 input: [RRRGGGBB]
+| BGRA8888 output: [B][G][R][A] — A = 0xFF
+|
+| Expansion:
+|   B2 (0-3) -> B8 = (B2 << 6) | (B2 << 4) | (B2 << 2) | B2
+|   G3 (0-7) -> G8 = (G3 << 5) | (G3 << 2) | (G3 >> 1)
+|   R3 (0-7) -> R8 = (R3 << 5) | (R3 << 2) | (R3 >> 1)
+|   A = 0xFF
+|
+| Register save: split movem d2-d7 / a2-a6 → parameters at offset 48.
+| d0: pixel, d1: temp, d2-d4: B,G,R components
+| d5: width, d6: height, d7: loop counter
+| a0: src, a1: dst, a2: src_skip, a3: dst_skip
+| ============================================================================
+
+    .text
+    .globl  _Atari_ConvertRGB332toBGRA8888_asm
+
+_Atari_ConvertRGB332toBGRA8888_asm:
+    movem.l d2-d7,-(sp)
+    movem.l a2-a6,-(sp)
+
+    move.l  48(sp),a0               | a0 = src
+    move.l  52(sp),a1               | a1 = dst
+    move.l  56(sp),d5               | d5 = width
+    move.l  60(sp),d6               | d6 = height
+    move.l  64(sp),a2               | a2 = src_pitch
+    move.l  68(sp),a3               | a3 = dst_pitch
+
+    | src_skip = src_pitch - width
+    sub.l   d5,a2                   | a2 = src_skip
+
+    | dst_skip = dst_pitch - width*4
+    move.l  d5,d0
+    lsl.l   #2,d0                   | width * 4
+    sub.l   d0,a3                   | a3 = dst_skip
+
+    subq.l  #1,d6
+    bmi.s   .rgb332_bgra_exit
+
+.rgb332_bgra_row:
+    move.l  d5,d7
+    subq.l  #1,d7
+
+.rgb332_bgra_pixel:
+    moveq   #0,d0
+    move.b  (a0)+,d0                | d0 = RGB332 pixel
+
+    | Extract B (bits 1-0) -> d2
+    move.b  d0,d2
+    and.b   #0x03,d2                | d2 = B2 (0-3)
+    | Expand B2 to B8: (B2 << 6) | (B2 << 4) | (B2 << 2) | B2
+    move.b  d2,d1
+    lsl.b   #2,d1
+    or.b    d1,d2                   | d2 = B2 | (B2 << 2) = lower 4 bits: 0000BBBB
+    move.b  d2,d1
+    lsl.b   #4,d1
+    or.b    d1,d2                   | d2 = full B8
+
+    | Extract G (bits 4-2) -> d3
+    move.b  d0,d3
+    lsr.b   #2,d3                   | shift right 2
+    and.b   #0x07,d3                | d3 = G3 (0-7)
+    | Expand G3 to G8: (G3 << 5) | (G3 << 2) | (G3 >> 1)
+    move.b  d3,d1
+    lsr.b   #1,d1                   | d1 = G3 >> 1
+    lsl.b   #2,d3                   | d3 = G3 << 2
+    or.b    d1,d3                   | d3 = (G3 << 2) | (G3 >> 1)
+    move.b  d3,d1
+    lsl.b   #5,d1
+    or.b    d1,d3                   | d3 = full G8
+
+    | Extract R (bits 7-5) -> d4
+    lsr.b   #5,d0                   | d0 = R3 (0-7)
+    | Expand R3 to R8: (R3 << 5) | (R3 << 2) | (R3 >> 1)
+    move.b  d0,d4
+    move.b  d0,d1
+    lsr.b   #1,d1                   | d1 = R3 >> 1
+    lsl.b   #2,d4                   | d4 = R3 << 2
+    or.b    d1,d4                   | d4 = (R3 << 2) | (R3 >> 1)
+    move.b  d4,d1
+    lsl.b   #5,d1
+    or.b    d1,d4                   | d4 = full R8
+
+    | Store BGRA
+    move.b  d2,(a1)+                | B
+    move.b  d3,(a1)+                | G
+    move.b  d4,(a1)+                | R
+    move.b  #0xFF,(a1)+             | A = 0xFF
+
+    dbra    d7,.rgb332_bgra_pixel
+
+    add.l   a2,a0                   | src += src_skip
+    add.l   a3,a1                   | dst += dst_skip
+    dbra    d6,.rgb332_bgra_row
+
+.rgb332_bgra_exit:
+    movem.l (sp)+,a2-a6
+    movem.l (sp)+,d2-d7
+    rts
+
+| ============================================================================
 | Atari_ConvertRGB332toARGB8888_asm - 68000-optimized LUT converter
 |
 | C: void Atari_ConvertRGB332toARGB8888_asm(const Uint8 *src, Uint32 *dst,

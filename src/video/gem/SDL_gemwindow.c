@@ -558,7 +558,7 @@ int GEM_CreateWindowFramebuffer(SDL_VideoDevice *this, SDL_Window *window,
     
     /* Reuse existing buffer if size matches */
     if (data->raw_buffer && data->buffer && 
-        w == data->work_w && h == data->work_h && data->buffer_pitch > 0) {
+        w == data->final_mfdb.fd_w && h == data->final_mfdb.fd_h && data->buffer_pitch > 0) {
         
         SDL_LogInfo(SDL_LOG_CATEGORY_VIDEO, 
                     "GEM: Reusing existing framebuffer %p (%dx%d, pitch=%u)",

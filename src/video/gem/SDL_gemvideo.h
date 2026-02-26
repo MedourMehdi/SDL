@@ -177,7 +177,12 @@ extern void Atari_ConvertRGB332toRGB888(const Uint8 *src, Uint8 *dst,
 extern void Atari_ConvertRGB332toARGB8888(const Uint8 *src, Uint32 *dst,
                                           int width, int height,
                                           int src_pitch, int dst_pitch);
-
+extern void Atari_ConvertRGB332toBGRA8888(const Uint8 *src, Uint32 *dst,
+                                          int width, int height,
+                                          int src_pitch, int dst_pitch);
+extern void Atari_ConvertARGB8888toRGB332(const Uint8 *src, Uint8 *dst,
+                                          int width, int height,
+                                          int src_pitch, int dst_pitch);                                          
 /* BGRA8888 → RGB332 (big-endian Atari: memory is [B][G][R][A]) */
 extern void Atari_ConvertBGRA8888toRGB332(const Uint8 *src, Uint8 *dst,
                                           int width, int height,
@@ -215,6 +220,12 @@ extern Uint32 rgb332_to_argb8888_lut[256];
                                                 int width, int height,
                                                 int src_pitch, int dst_pitch);
     extern void Atari_ConvertRGB332toARGB8888_asm(const Uint8 *src, Uint32 *dst,
+                                                  int width, int height,
+                                                  int src_pitch, int dst_pitch);
+    extern void Atari_ConvertRGB332toBGRA8888_asm(const Uint8 *src, Uint32 *dst,
+                                                  int width, int height,
+                                                  int src_pitch, int dst_pitch);                                                  
+    extern void Atari_ConvertARGB8888toRGB332_asm(const Uint8 *src, Uint8 *dst,
                                                   int width, int height,
                                                   int src_pitch, int dst_pitch);
     extern void Atari_ConvertBGRA8888toRGB332_asm(const Uint8 *src, Uint8 *dst,
