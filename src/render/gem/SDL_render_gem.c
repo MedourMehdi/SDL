@@ -671,7 +671,7 @@ static int GEM_CreateRenderer(SDL_Renderer *renderer, SDL_Window *window, Uint32
     if (data->vsync_enabled) {
         renderer->info.flags |= SDL_RENDERER_PRESENTVSYNC;
     }
-    renderer->info.num_texture_formats    = 5;
+    renderer->info.num_texture_formats    = 6;
     renderer->info.texture_formats[0]     = SDL_PIXELFORMAT_RGB332;
     renderer->info.texture_formats[1]     = SDL_PIXELFORMAT_RGB565;
     renderer->info.texture_formats[2]     = SDL_PIXELFORMAT_RGB888;
@@ -711,10 +711,18 @@ static int GEM_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture)
      * hits the fast memcpy path instead of SDL_BlitScaled. */
     if (GEM_AcquireWindowSurface(renderdata)) {
         win_surf = renderdata->window_surface;
-        // if (win_surf &&
-        //     texture->format == SDL_PIXELFORMAT_RGB332 &&
-        //     win_surf->format->format != SDL_PIXELFORMAT_RGB332) {
-        if (win_surf && texture->format != win_surf->format->format && texture->format != SDL_PIXELFORMAT_ARGB8888) {        
+        if (win_surf &&
+                ( 
+                ( texture->format == SDL_PIXELFORMAT_RGB332 && win_surf->format->format != SDL_PIXELFORMAT_RGB332 )
+                ||
+                ( 
+                    (texture->format == SDL_PIXELFORMAT_BGRX8888 || texture->format == SDL_PIXELFORMAT_BGRA8888) 
+                    &&
+                    (win_surf->format->format != SDL_PIXELFORMAT_BGRX8888 && win_surf->format->format != SDL_PIXELFORMAT_BGRA8888 ) 
+                ) 
+                )
+            ) {
+        // if (win_surf && texture->format != win_surf->format->format) {        
             surface_format = win_surf->format->format;
         }
     }
@@ -1189,7 +1197,7 @@ SDL_RenderDriver GEM_RenderDriver = {
     {
         "gem",
         SDL_RENDERER_SOFTWARE,
-        5,
+        6,
         {
             SDL_PIXELFORMAT_RGB332,
             SDL_PIXELFORMAT_RGB565,
