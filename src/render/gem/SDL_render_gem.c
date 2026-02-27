@@ -842,6 +842,11 @@ static int GEM_UpdateTexture(SDL_Renderer *renderer, SDL_Texture *texture,
                 converted = 1;
                 break;                
         }
+    } else if (data->src_format != surface->format->format) {
+        SDL_ConvertPixels(rect->w, rect->h,
+                            data->src_format, src, pitch,
+                            surface->format->format, dst_base, surface->pitch);
+        converted = 1;
     }
 
     /* Fallback: plain memcpy for matching formats or unhandled conversions.

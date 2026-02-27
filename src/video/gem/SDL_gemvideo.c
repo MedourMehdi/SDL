@@ -166,9 +166,49 @@ static void InitPaletteLUT(SDL_VideoData *data)
     SDL_LogInfo(SDL_LOG_CATEGORY_VIDEO, 
                 "GEM: Building palette LUT for %d colors (ONE-TIME)", num_colors);
     
-    /* STEP 1: Read hardware palette via BIOS Setcolor() - 256 trap calls */
-    for (i = 0; i < num_colors; i++) {
-        data->hw_palette[i] = (Uint16)Setcolor(i, -1);
+    /* STEP 1: Read hardware palette via vq_color().
+     *
+     * Why NOT Setcolor(): ST/STe BIOS call, covers only hardware slots 0..15.
+     * Why NOT VgetRGB(): Falcon XBIOS only, returns raw hardware values before
+     *   the VDI index remapping is applied — wrong colour for slots 0..15.
+     *
+     * vq_color(handle, vdi_pen, set_flag, rgb[3]) reads by VDI pen index,
+     * but our planar buffer (fd_stand=0, device-specific) stores HARDWARE
+     * slot indices — vro_cpyfm feeds pixel values directly to the palette
+     * hardware, bypassing the VDI pen remapping.
+     *
+     * The VDI remaps hardware slots 0..15 to different VDI pen numbers.
+     * (Slots 16..254 are identity; slot 255 → VDI pen 1.)
+     * This is the same mapping used by vdi_index[] in Patrice Mandin's
+     * vdi_com.c reference implementation.
+     *
+     * To get the colour actually displayed at hardware slot hw:
+     *   vdi_pen = vdi_index[hw]
+     *   vq_color(handle, vdi_pen, 1, rgb)
+     *
+     * We store colours indexed by hardware slot so the distance-matcher
+     * produces hardware slot indices directly into rgb332_to_hw[]. */
+    {
+        /* Hardware slot → VDI pen mapping (from Atari VDI documentation).
+         * Indices 16..254 are identity; 255 → VDI pen 1. */
+        static const Uint8 vdi_index[16] = {
+            0, 2, 3, 6, 4, 7, 5, 8, 9, 10, 11, 14, 12, 15, 13, 255
+        };
+        short rgb[3];
+        int r4, g4, b4, vdi_pen;
+        for (i = 0; i < num_colors; i++) {
+            vdi_pen = (i < 16) ? (int)vdi_index[i] : (i == 255 ? 1 : i);
+            vq_color(data->vdi_handle, vdi_pen, 1, rgb);
+            /* VDI 0..1000 → 4-bit 0..15 */
+            r4 = ((int)rgb[0] * 15 + 500) / 1000;
+            g4 = ((int)rgb[1] * 15 + 500) / 1000;
+            b4 = ((int)rgb[2] * 15 + 500) / 1000;
+            if (r4 < 0) r4 = 0; else if (r4 > 15) r4 = 15;
+            if (g4 < 0) g4 = 0; else if (g4 > 15) g4 = 15;
+            if (b4 < 0) b4 = 0; else if (b4 > 15) b4 = 15;
+            /* Store indexed by hardware slot */
+            data->hw_palette[i] = (Uint16)((r4 << 8) | (g4 << 4) | b4);
+        }
     }
     
     /* STEP 2: Check for identity palette (RGB332 matches hardware) */
