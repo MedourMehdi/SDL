@@ -409,17 +409,101 @@ int GEM_SetDisplayMode(SDL_VideoDevice *this, SDL_VideoDisplay *display, SDL_Dis
 
 static int GEM_ShowMessageBox(const SDL_MessageBoxData *messageboxdata, int *buttonid)
 {
-    char alert_str[256];
-    char safe_msg[180];
+    char alert_str[512];
+    char safe_msg[200];
+    char buttons_str[128];
     short result;
+    int num_buttons;
+    int icon;
+    int i;
+    int pos;
+    const char *btn_text;
+    size_t btn_len;
+    size_t remaining;
     
-    if (!messageboxdata || !messageboxdata->message) return -1;
+    if (!messageboxdata || !messageboxdata->message) {
+        return -1;
+    }
     
+    /* GEM supports max 3 buttons, clamp to valid range */
+    num_buttons = messageboxdata->numbuttons;
+    if (num_buttons > 3) {
+        num_buttons = 3;
+    } else if (num_buttons < 1) {
+        num_buttons = 1;
+    }
+    
+    /* Build button string with | separators */
+    buttons_str[0] = '\0';
+    pos = 0;
+    remaining = sizeof(buttons_str) - 1;
+    
+    for (i = 0; i < num_buttons && remaining > 0; i++) {
+        if (i > 0) {
+            if (remaining > 1) {
+                buttons_str[pos++] = '|';
+                buttons_str[pos] = '\0';
+                remaining--;
+            }
+        }
+        
+        btn_text = messageboxdata->buttons[i].text;
+        if (!btn_text) {
+            btn_text = "?";
+        }
+        
+        /* Truncate individual button text if needed (max ~20 chars for GEM) */
+        btn_len = SDL_strlen(btn_text);
+        if (btn_len > 20) {
+            btn_len = 20;
+        }
+        
+        if (btn_len > remaining) {
+            btn_len = remaining;
+        }
+        
+        if (btn_len > 0) {
+            SDL_memcpy(buttons_str + pos, btn_text, btn_len);
+            pos += (int)btn_len;
+            buttons_str[pos] = '\0';
+            remaining -= btn_len;
+        }
+    }
+    
+    /* Map SDL message box flags to GEM icon */
+    /* 0=none, 1=warning(!), 2=question(?), 3=stop - use 1 as default */
+    if (messageboxdata->flags & SDL_MESSAGEBOX_ERROR) {
+        icon = 3;  /* stop sign */
+    } else if (messageboxdata->flags & SDL_MESSAGEBOX_WARNING) {
+        icon = 1;  /* exclamation */
+    } else {
+        icon = 1;  /* default to warning (info icon=4 is AES 4.10+) */
+    }
+    
+    /* Copy and sanitize message: truncate and replace newlines with | */
     SDL_strlcpy(safe_msg, messageboxdata->message, sizeof(safe_msg));
-    SDL_snprintf(alert_str, sizeof(alert_str), "[1][%s][OK]", safe_msg);
     
+    for (i = 0; safe_msg[i] != '\0'; i++) {
+        if (safe_msg[i] == '\n' || safe_msg[i] == '\r') {
+            safe_msg[i] = '|';
+        }
+    }
+    
+    /* Build final alert string */
+    SDL_snprintf(alert_str, sizeof(alert_str), "[%d][%s][%s]", 
+                 icon, safe_msg, buttons_str);
+    
+    /* Default button is 1 (first button) */
     result = mt_form_alert(1, alert_str, sdl_global_aes);
-    if (buttonid) *buttonid = (result == 1) ? 0 : -1;
+    
+    /* Map GEM result (1, 2, 3) back to SDL buttonid */
+    if (buttonid) {
+        if (result >= 1 && result <= num_buttons) {
+            *buttonid = messageboxdata->buttons[result - 1].buttonid;
+        } else {
+            *buttonid = -1;  /* Error or unexpected result */
+        }
+    }
     
     return 0;
 }
