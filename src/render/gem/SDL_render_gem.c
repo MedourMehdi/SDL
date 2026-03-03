@@ -291,6 +291,16 @@ static void GEM_MergeDirtyRects(GEM_RenderData *data)
             }
         }
     } while (merged && data->num_dirty_rects > 1 && iterations < MAX_MERGE_ITERATIONS);
+
+    /* Remove any zero-size rects that may have survived merging */
+    for (i = 0; i < data->num_dirty_rects; ) {
+        if (data->dirty_rects[i].w <= 0 || data->dirty_rects[i].h <= 0) {
+            data->dirty_rects[i] = data->dirty_rects[data->num_dirty_rects - 1];
+            data->num_dirty_rects--;
+        } else {
+            i++;
+        }
+    }    
 }
 
 /* ============================================================================
@@ -365,13 +375,16 @@ static void GEM_DrawLine(SDL_Surface *surface, int x0, int y0, int x1, int y1,
                          Uint32 color)
 {
     int dx, dy, sx, sy, err, e2;
-    const int pitch = surface->pitch;
-    const int bpp   = surface->format->BytesPerPixel;
-    const int w     = surface->w;
-    const int h     = surface->h;
-    Uint8 *pixels   = (Uint8 *)surface->pixels;
+    int pitch, bpp, w, h;
+    Uint8 *pixels, *pixel;
 
-    if (!surface || !pixels) return;
+    if (!surface || !surface->pixels) return;
+
+    pitch  = surface->pitch;
+    bpp    = surface->format->BytesPerPixel;
+    w      = surface->w;
+    h      = surface->h;
+    pixels = (Uint8 *)surface->pixels;
 
     dx = (x1 > x0) ? (x1 - x0) : (x0 - x1);
     dy = (y1 > y0) ? (y1 - y0) : (y0 - y1);
@@ -381,7 +394,7 @@ static void GEM_DrawLine(SDL_Surface *surface, int x0, int y0, int x1, int y1,
 
     while (1) {
         if (x0 >= 0 && x0 < w && y0 >= 0 && y0 < h) {
-            Uint8 *pixel = pixels + y0 * pitch + x0 * bpp;
+            pixel = pixels + y0 * pitch + x0 * bpp;
             switch (bpp) {
                 case 1: *pixel = (Uint8)color; break;
                 case 2: *(Uint16 *)pixel = (Uint16)color; break;
@@ -546,9 +559,10 @@ static int GEM_RunCommandQueue(SDL_Renderer *renderer, SDL_RenderCommand *cmd,
 
                 {
                     SDL_Rect dirty;
-                    dirty.x = min_x; dirty.y = min_y;
-                    dirty.w = max_x - min_x + 1;
-                    dirty.h = max_y - min_y + 1;
+                    dirty.x = (min_x < 0)          ? 0              : min_x;
+                    dirty.y = (min_y < 0)          ? 0              : min_y;
+                    dirty.w = (max_x >= surface->w ? surface->w - 1 : max_x) - dirty.x + 1;
+                    dirty.h = (max_y >= surface->h ? surface->h - 1 : max_y) - dirty.y + 1;
                     GEM_AddDirtyRect(data, &dirty);
                 }
 
@@ -949,15 +963,21 @@ static void GEM_UnlockTexture(SDL_Renderer *renderer, SDL_Texture *texture)
     }
 
     {
-        const Uint8 *src = (const Uint8 *)data->lock_buffer;
-        Uint8 *dst_base = (Uint8 *)surface->pixels +
-                            data->lock_rect.y * surface->pitch +
-                            data->lock_rect.x * surface->format->BytesPerPixel;
-        int src_pitch   = data->lock_rect.w * SDL_BYTESPERPIXEL(data->src_format);
+        const Uint8 *src;
+        Uint8 *dst_base;
+        int src_pitch;
 
         if (SDL_MUSTLOCK(surface)) {
             if (SDL_LockSurface(surface) < 0) return;
         }
+
+        src = (const Uint8 *)data->lock_buffer;
+
+        dst_base = (Uint8 *)surface->pixels +
+                            data->lock_rect.y * surface->pitch +
+                            data->lock_rect.x * surface->format->BytesPerPixel;
+
+        src_pitch = data->lock_rect.w * SDL_BYTESPERPIXEL(data->src_format);
 
         if (data->src_format == SDL_PIXELFORMAT_BGRX8888 || data->src_format == SDL_PIXELFORMAT_BGRA8888) {
             switch (surface->format->format) {
@@ -1108,8 +1128,15 @@ static int GEM_QueueCopy(SDL_Renderer *renderer, SDL_RenderCommand *cmd,
         verts[0].w = texture->w; verts[0].h = texture->h;
     }
 
-    verts[1].x = (int)dstrect->x; verts[1].y = (int)dstrect->y;
-    verts[1].w = (int)dstrect->w; verts[1].h = (int)dstrect->h;
+    verts[1].x = (int)dstrect->x;
+    verts[1].y = (int)dstrect->y;
+    /* If the destination covers more area than the source, clamp it to the
+     * source dimensions.  This keeps srcrect and dstrect the same size so
+     * GEM_OptimizedTextureCopy always takes the fast row-memcpy path instead
+     * of falling through to SDL_BlitScaled.  The cleared background (from
+     * SDL_RenderClear) fills the surrounding pillarbox/letterbox area. */
+    verts[1].w = ((int)dstrect->w > verts[0].w) ? verts[0].w : (int)dstrect->w;
+    verts[1].h = ((int)dstrect->h > verts[0].h) ? verts[0].h : (int)dstrect->h;
     cmd->data.draw.count = 2;
     return 0;
 }

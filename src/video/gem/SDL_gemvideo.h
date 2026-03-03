@@ -71,16 +71,17 @@ typedef struct SDL_VideoData {
 } SDL_VideoData;
 
 /* ============================================================
+   Window state flags – stored in SDL_WindowData.state_flags
+   ============================================================ */
+#define GEM_STATE_MAXIMIZED  0x01
+#define GEM_STATE_ICONIFIED  0x02
+#define GEM_STATE_FULLSCREEN 0x04
+#define GEM_STATE_WAS_MAXIMIZED 0x08
+
+/* ============================================================
    Window data
    ============================================================ */
 typedef struct SDL_WindowData {
-    short handle;
-    short win_type;
-    short win_x, win_y, win_w, win_h;
-    short work_x, work_y, work_w, work_h;
-    SDL_bool  is_maximized;
-    GRECT     restore_rect;
-
     /* Framebuffer */
     void *buffer;               /* SDL chunky buffer (aligned) */
     void *raw_buffer;           /* Original malloc ptr for free */
@@ -94,6 +95,13 @@ typedef struct SDL_WindowData {
     void  *remap_buffer;
     void  *raw_remap_buffer;
     size_t remap_buffer_size;
+
+    short handle;
+    short win_type;
+    short win_x, win_y, win_w, win_h;
+    short work_x, work_y, work_w, work_h;
+    Uint8     state_flags;    /* GEM_STATE_* bitmask                       */
+    GRECT     restore_rect;   /* border rect saved before maximize/iconify */
 
     /* PRECOMPUTED C2P constants (calculated once in CreateWindowFramebuffer) */
     int aligned_w;          /* Width rounded to 16 pixels */
@@ -145,6 +153,7 @@ extern void  GEM_SetWindowResizable(SDL_VideoDevice *this, SDL_Window *window, S
 extern void  GEM_SetWindowSize(SDL_VideoDevice *this, SDL_Window *window);
 extern void  GEM_SetWindowMinimumSize(SDL_VideoDevice *this, SDL_Window *window);
 extern void  GEM_SetWindowMaximumSize(SDL_VideoDevice *this, SDL_Window *window);
+extern void   GEM_SetWindowFullscreen(SDL_VideoDevice *this, SDL_Window *window, SDL_VideoDisplay *display, SDL_bool fullscreen);
 
 /* Events */
 extern void GEM_PumpEvents(SDL_VideoDevice *this);
@@ -248,6 +257,10 @@ extern Uint32 rgb332_to_argb8888_lut[256];
      Atari_CalculateRowChecksum(r,l))
 #else
     #define CALCULATE_ROW_CHECKSUM(r,l) CalculateRowChecksum(r,l)
+#endif
+
+#ifndef MFDB_STRIDE
+#define MFDB_STRIDE(w) (((w) + 15) & ~15)
 #endif
 
 #endif /* SDL_gemvideo_h_ */

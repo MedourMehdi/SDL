@@ -137,6 +137,7 @@ SDL_VideoDevice *GEM_CreateDevice(void)
     device->SetWindowSize = GEM_SetWindowSize;
     device->SetWindowMinimumSize = GEM_SetWindowMinimumSize;
     device->SetWindowMaximumSize = GEM_SetWindowMaximumSize;
+    device->SetWindowFullscreen  = GEM_SetWindowFullscreen;
 
     device->PumpEvents = GEM_PumpEvents;
 
@@ -366,8 +367,8 @@ int GEM_VideoInit(SDL_VideoDevice *this)
             break;
     }
     
-    mode.w = data->desk_w;
-    mode.h = data->desk_h;
+    mode.w = data->work_w;
+    mode.h = data->work_h;
     mode.refresh_rate = 60;
     
     SDL_zero(display);
