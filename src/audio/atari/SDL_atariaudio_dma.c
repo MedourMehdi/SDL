@@ -1,6 +1,7 @@
 /*
   Simple DirectMedia Layer
   Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
+  Optimized for Motorola 68000 / Atari Falcon
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -26,26 +27,18 @@
 
    Drop-free circular buffer polling driver using Falcon DMA audio hardware.
    No interrupt handler — the main thread polls the DMA position register
-   directly and yields via pthread_yield() when too close to the playhead.
+   directly and yields/sleeps intelligently to avoid bus contention.
 
    Buffer strategy:
-    - $(NUM_CHUNKS)-chunk circular buffer allocated in ST-RAM (Mxalloc)
+    - NUM_CHUNKS-chunk circular buffer allocated in ST-RAM (Mxalloc)
     - Fill pointer advances one chunk per callback
-    - DMA position read via double-sample loop (read_dma_pos) to avoid
-      torn values across the three byte-wide hardware registers
-    - WaitDevice blocks until DMA is >= 2 chunks ahead of the fill pointer
-      (wraparound-safe circular distance, equal-offset treated as 0 not
-      total_size to prevent a false "fully free" reading at startup)
-    - `playing` is volatile: prevents the compiler hoisting the load out of
-      the WaitDevice spin loop when CloseDevice races to clear it
+    - DMA position read via double-sample loop (read_dma_pos)
+    - WaitDevice intelligently uses pthread_yield() when close, and 
+      SDL_Delay(2) when far enough ahead to free the hardware bus.
 
-   Format handling:
-     - 16-bit: S16MSB native; S16LSB triggers inline byte-swap (asm, 8w/iter)
+   Format handling (Fully optimized 68k Assembly):
+     - 16-bit: S16MSB native; S16LSB triggers inline byte-swap
      - 8-bit:  S8 native; U8 triggers XOR 0x80 conversion
-
-   Frequency matching: nearest entry in Falcon prescale table (49170→8195 Hz).
-
-   Requires: FreeMiNT (pthread_yield), Falcon or compatible DMA audio hardware.
    ============================================================================ */
 
 #include "../../SDL_internal.h"
@@ -61,117 +54,170 @@
 #include <pthread.h>
 
 /* --- Definitions --- */
-#define SND_16BIT   0x04
-#define SND_8BIT    0x02
-#define _THIS SDL_AudioDevice *this
-#define NUM_CHUNKS 4  /* Safe distance requires multiple chunks */
+#define SND_16BIT        0x04
+#define SND_8BIT         0x02
+#define _THIS            SDL_AudioDevice *this
+#define NUM_CHUNKS       4      
+#define WAIT_SPIN_MAX    2000   
 
 typedef struct { int freq; int prescale; } FalconFreq;
 static const FalconFreq falcon_freq_table[] = {
     { 49170, 1 }, { 33880, 2 }, { 24585, 3 }, { 20770, 4 },
-    { 16490, 5 }, { 12292, 6 }, { 9849, 7 },  { 8195, 8 }, { 0, 0 }
+    { 16490, 5 }, { 12292, 6 }, { 9849,  7 }, { 8195,  8 },
+    { 0, 0 }
 };
 
 struct SDL_PrivateAudioData {
-    Uint8 *current_fill_ptr, *buffer_base, *buffer_end;
-    int chunk_size, swap_needed, xor_needed, total_size;
-    volatile int playing;   /* written by stop/CloseDevice, read in WaitDevice spin */
+    Uint8          *current_fill_ptr;
+    Uint8          *buffer_base;
+    Uint8          *buffer_end;
+    int             chunk_size;
+    int             total_size;
+    int             swap_needed;
+    int             xor_needed;
+    volatile int    playing;    
 };
 
-/* --- Audio Conversions --- */
-static void convert_sign_bit(Uint8 *ptr, int count)
-{
-    Uint32 *p32 = (Uint32 *)ptr;
-    int c32 = count >> 2;
-    int rem = count & 3;
+/* -------------------------------------------------------------------------
+ * Optimized Audio Format Conversions (68000 Assembly)
+ * ---------------------------------------------------------------------- */
 
-    while (c32--) *p32++ ^= 0x80808080;
-    ptr = (Uint8*)p32;
-    while (rem--) *ptr++ ^= 0x80;
+/* convert_sign_bit_asm: Processes 16-byte blocks using movem.l and
+   dual-pointer post-increment addressing, followed by a remainder loop. */
+static inline void convert_sign_bit_asm(Uint8 *ptr, int count)
+{
+    int loops = count >> 4;       /* Number of 16-byte blocks */
+    int rem   = count & 15;       /* Remaining bytes (0-15) */
+    Uint8 *write_ptr = ptr;
+    
+    if (loops > 0) {
+        Uint32 mask = 0x80808080UL;
+        loops--; /* Adjust for dbra (stops at -1) */
+        __asm__ volatile (
+            "1:\n\t"
+            "   movem.l (%0)+, d0-d3\n\t"   /* Read 16 bytes and advance ptr */
+            "   eor.l   %2, d0\n\t"
+            "   eor.l   %2, d1\n\t"
+            "   eor.l   %2, d2\n\t"
+            "   eor.l   %2, d3\n\t"
+            "   move.l  d0, (%1)+\n\t"      /* Write and advance write_ptr */
+            "   move.l  d1, (%1)+\n\t"
+            "   move.l  d2, (%1)+\n\t"
+            "   move.l  d3, (%1)+\n\t"
+            "   dbra    %3, 1b\n\t"
+            : "+a" (ptr), "+a" (write_ptr)
+            : "d" (mask), "d" (loops)
+            : "d0", "d1", "d2", "d3", "memory", "cc"
+        );
+    }
+    
+    if (rem > 0) {
+        rem--;
+        __asm__ volatile (
+            "2:\n\t"
+            "   move.b  (%0), d0\n\t"
+            "   eor.b   #0x80, d0\n\t"
+            "   move.b  d0, (%0)+\n\t"
+            "   dbra    %1, 2b\n\t"
+            : "+a" (ptr) : "d" (rem) : "d0", "memory", "cc"
+        );
+    }
 }
 
-/* --- Optimized Byte Swap (Corrected) --- */
+/* swap_audio_bytes_asm: Processes 16-byte blocks (8 samples) using movem.l
+   and the 4-cycle 'swap' trick, followed by a remainder loop for words. */
 static inline void swap_audio_bytes_asm(Uint8 *ptr, int count)
 {
-    /* 
-     * Process 16 bytes (8 words) per loop iteration.
-     * Use proven safe logic to handle remainders correctly.
-     */
+    int loops = count >> 4;         /* Number of 16-byte blocks */
+    int rem   = (count & 15) >> 1;  /* Remaining 2-byte words */
+    Uint8 *write_ptr = ptr;
+
+    if (loops > 0) {
+        loops--;
+        __asm__ volatile (
+            "1:\n\t"
+            "   movem.l (%0)+, d0-d3\n\t"
+            "   ror.w   #8, d0\n\t" "   swap    d0\n\t" "   ror.w   #8, d0\n\t" "   swap    d0\n\t"
+            "   ror.w   #8, d1\n\t" "   swap    d1\n\t" "   ror.w   #8, d1\n\t" "   swap    d1\n\t"
+            "   ror.w   #8, d2\n\t" "   swap    d2\n\t" "   ror.w   #8, d2\n\t" "   swap    d2\n\t"
+            "   ror.w   #8, d3\n\t" "   swap    d3\n\t" "   ror.w   #8, d3\n\t" "   swap    d3\n\t"
+            "   move.l  d0, (%1)+\n\t"
+            "   move.l  d1, (%1)+\n\t"
+            "   move.l  d2, (%1)+\n\t"
+            "   move.l  d3, (%1)+\n\t"
+            "   dbra    %2, 1b\n\t"
+            : "+a" (ptr), "+a" (write_ptr) 
+            : "d" (loops)
+            : "d0", "d1", "d2", "d3", "memory", "cc"
+        );
+    }
+    
+    if (rem > 0) {
+        rem--;
+        __asm__ volatile (
+            "2:\n\t"
+            "   move.w  (%0), d0\n\t"
+            "   ror.w   #8, d0\n\t"
+            "   move.w  d0, (%0)+\n\t"
+            "   dbra    %1, 2b\n\t"
+            : "+a" (ptr) : "d" (rem) : "d0", "memory", "cc"
+        );
+    }
+}
+
+/* -------------------------------------------------------------------------
+ * Hardware Access
+ * ---------------------------------------------------------------------- */
+
+/* read_dma_pos: ASM optimized double-read to ensure stability during DMA motion.
+   Uses Absolute Short (.w) addressing for fastest instruction fetch. */
+static Uint8 *read_dma_pos(void)
+{
+    Uint32 res;
     __asm__ volatile (
-        "   move.l  %0,a0\n"
-        "   move.l  %1,d0\n"
-        "   lsr.l   #4,d0\n"      /* Divide by 16 */
-        "   beq.s   2f\n"
-        "   subq.l  #1,d0\n"
-        "1:\n"
-        "   move.w  (a0),d1\n"  "   ror.w   #8,d1\n"  "   move.w  d1,(a0)+\n"
-        "   move.w  (a0),d1\n"  "   ror.w   #8,d1\n"  "   move.w  d1,(a0)+\n"
-        "   move.w  (a0),d1\n"  "   ror.w   #8,d1\n"  "   move.w  d1,(a0)+\n"
-        "   move.w  (a0),d1\n"  "   ror.w   #8,d1\n"  "   move.w  d1,(a0)+\n"
-        "   move.w  (a0),d1\n"  "   ror.w   #8,d1\n"  "   move.w  d1,(a0)+\n"
-        "   move.w  (a0),d1\n"  "   ror.w   #8,d1\n"  "   move.w  d1,(a0)+\n"
-        "   move.w  (a0),d1\n"  "   ror.w   #8,d1\n"  "   move.w  d1,(a0)+\n"
-        "   move.w  (a0),d1\n"  "   ror.w   #8,d1\n"  "   move.w  d1,(a0)+\n"
-        "   dbra    d0,1b\n"
-        "2:\n"
-        "   move.l  %1,d0\n"
-        "   and.l   #14,d0\n"     /* Remainder < 16 bytes */
-        "   beq.s   4f\n"
-        "   lsr.l   #1,d0\n"      /* Convert bytes to words */
-        "   subq.l  #1,d0\n"
-        "3:\n"
-        "   move.w  (a0),d1\n"  "   ror.w   #8,d1\n"  "   move.w  d1,(a0)+\n"
-        "   dbra    d0,3b\n"
-        "4:\n"
-        : : "r"(ptr), "r"(count) : "a0", "d0", "d1", "cc", "memory"
+        "0:\n\t"
+        "   moveq   #0, d0\n\t"
+        "   move.b  0xFFFF8909.w, d0\n\t"   /* High byte */
+        "   swap    d0\n\t"
+        "   move.b  0xFFFF890B.w, d0\n\t"   /* Mid byte */
+        "   lsl.w   #8, d0\n\t"
+        "   move.b  0xFFFF890D.w, d0\n\t"   /* Low byte */
+        "   move.l  d0, d1\n\t"             /* Store first sample */
+        "   moveq   #0, d0\n\t"
+        "   move.b  0xFFFF8909.w, d0\n\t"
+        "   swap    d0\n\t"
+        "   move.b  0xFFFF890B.w, d0\n\t"
+        "   lsl.w   #8, d0\n\t"
+        "   move.b  0xFFFF890D.w, d0\n\t"
+        "   cmp.l   d0, d1\n\t"             /* Verify stability */
+        "   bne.s   0b\n\t"
+        "   move.l  d0, %0\n\t"
+        : "=d"(res) : : "d0", "d1", "cc"
     );
+    return (Uint8 *)res;
 }
 
-/* --- DMA Hardware Registers --- */
-#define DMA_PTR_HIGH  ((volatile Uint8 *)0xFFFF8909)
-#define DMA_PTR_MID   ((volatile Uint8 *)0xFFFF890B)
-#define DMA_PTR_LOW   ((volatile Uint8 *)0xFFFF890D)
-
-/* read_dma_pos – atomic 3-byte read via double-sample.
- *
- * The Falcon DMA position is spread across three byte registers.  A single
- * read sequence can straddle a hardware counter increment and produce a torn
- * address.  Reading twice and comparing guarantees both samples were taken
- * within the same counter state; on a 68000 the counter advances at most
- * once per ~20 ns, so two consecutive reads that agree are always coherent.
- * No interrupt masking required.
- */
-static Uint8 *read_dma_pos(const struct SDL_PrivateAudioData *hidden)
+static int best_prescale(int freq)
 {
-    Uint32 a, b;
-    do {
-        a = ((Uint32)*DMA_PTR_HIGH << 16) |
-            ((Uint32)*DMA_PTR_MID  <<  8) |
-             (Uint32)*DMA_PTR_LOW;
-        b = ((Uint32)*DMA_PTR_HIGH << 16) |
-            ((Uint32)*DMA_PTR_MID  <<  8) |
-             (Uint32)*DMA_PTR_LOW;
-    } while (a != b);
-    (void)hidden; /* parameter reserved for future range-check */
-    return (Uint8 *)a;
-}
-
-/* --- Hardware Setup --- */
-static void mint_audio_open_hw(SDL_AudioDevice *device, SDL_AudioSpec *spec)
-{
-    struct SDL_PrivateAudioData *hidden = device->hidden;
-    int i, best_idx = 0, min_diff = 1000000, diff, mode;
-
+    int i, best_idx = 0, min_diff = 0x7FFFFFFF, diff;
     for (i = 0; falcon_freq_table[i].freq != 0; i++) {
-        diff = spec->freq - falcon_freq_table[i].freq;
-        diff = (diff < 0) ? -diff : diff;
-        if (diff < min_diff) {
+        diff = freq - falcon_freq_table[i].freq;
+        if (diff < 0) diff = -diff;
+        if (diff <= min_diff) {
             min_diff = diff;
             best_idx = i;
         }
     }
+    return falcon_freq_table[best_idx].prescale;
+}
+
+static void mint_audio_open_hw(SDL_AudioDevice *device, SDL_AudioSpec *spec)
+{
+    struct SDL_PrivateAudioData *hidden = device->hidden;
+    int mode;
 
     hidden->swap_needed = hidden->xor_needed = 0;
+
     if (SDL_AUDIO_BITSIZE(spec->format) == 16) {
         if (spec->format == AUDIO_S16LSB) hidden->swap_needed = 1;
         else spec->format = AUDIO_S16MSB;
@@ -184,12 +230,13 @@ static void mint_audio_open_hw(SDL_AudioDevice *device, SDL_AudioSpec *spec)
     }
 
     SDL_CalculateAudioSpec(spec);
+
     hidden->chunk_size = spec->size;
     hidden->total_size = hidden->chunk_size * NUM_CHUNKS;
     hidden->buffer_base = (Uint8 *)Mxalloc(hidden->total_size, MX_STRAM);
-    
+
     if (!hidden->buffer_base) {
-        SDL_SetError("Out of ST-RAM");
+        SDL_SetError("ATARI audio: out of ST-RAM (%d bytes)", hidden->total_size);
         return;
     }
 
@@ -201,7 +248,7 @@ static void mint_audio_open_hw(SDL_AudioDevice *device, SDL_AudioSpec *spec)
     Locksnd();
     Sndstatus(SND_RESET);
     Buffoper(0);
-    Devconnect(DMAPLAY, DAC, CLK25M, falcon_freq_table[best_idx].prescale, NO_SHAKE);
+    Devconnect(DMAPLAY, DAC, CLK25M, best_prescale(spec->freq), NO_SHAKE);
     Setmode(mode);
     Settracks(0, 0);
     Setmontracks(0);
@@ -210,11 +257,10 @@ static void mint_audio_open_hw(SDL_AudioDevice *device, SDL_AudioSpec *spec)
 static void mint_audio_start_hw(SDL_AudioDevice *device)
 {
     struct SDL_PrivateAudioData *hidden = device->hidden;
-    
     if (!hidden->playing) {
         Setbuffer(SR_PLAY, hidden->buffer_base, hidden->buffer_end);
-        hidden->playing = 1;
         hidden->current_fill_ptr = hidden->buffer_base;
+        hidden->playing = 1;
         Buffoper(SB_PLA_ENA | SB_PLA_RPT);
     }
 }
@@ -239,7 +285,10 @@ static void mint_audio_close_hw(SDL_AudioDevice *device)
     Unlocksnd();
 }
 
-/* --- SDL Interface --- */
+/* -------------------------------------------------------------------------
+ * SDL audio interface
+ * ---------------------------------------------------------------------- */
+
 static void ATARI_CloseDevice(SDL_AudioDevice *device)
 {
     if (device->hidden) {
@@ -250,52 +299,52 @@ static void ATARI_CloseDevice(SDL_AudioDevice *device)
     }
 }
 
-/* 
-* WaitDevice – DROP PREVENTION
-*
-* We spin until the DMA playhead is at least 2 chunks ahead of the fill
-* pointer, giving us one full chunk of write headroom.
-*
-* Equal-offset edge case: if fill_offset == dma_offset the circular
-* distance formula would yield total_size (a full lap), which looks like
-* the buffer is completely free — dangerously wrong at startup before the
-* DMA has advanced.  We treat distance == 0 (or distance == total_size,
-* same thing mod wrap) as "not yet safe" by clamping it to 0.
-*
-* CloseDevice race: `playing` is volatile so the compiler cannot hoist the
-* load out of the loop; the store in mint_audio_stop_hw is immediately
-* visible to this thread on 68000 (coherent store-load on a single core).
- */
 static void ATARI_WaitDevice(_THIS)
 {
     struct SDL_PrivateAudioData *hidden = this->hidden;
-    Uint32 dma_offset, fill_offset;
-    int32_t distance;
-    
-    fill_offset = hidden->current_fill_ptr - hidden->buffer_base;
-    
+    const int  safe_dist  = hidden->chunk_size * 2;
+    const int  total      = hidden->total_size;
+    Uint32     fill_offset;
+    int        spin_count = 0;
+
+    fill_offset = (Uint32)(hidden->current_fill_ptr - hidden->buffer_base);
+
     while (hidden->playing) {
-        
-        dma_offset = read_dma_pos(hidden) - hidden->buffer_base;
-        distance = (int32_t)dma_offset - (int32_t)fill_offset;
-        
-       /* Wraparound correction: negative distance means DMA wrapped */
-       if (distance < 0) {
-           distance += hidden->total_size;
-            }
+        Uint32  dma_offset;
+        int32_t distance;
+        int     wait_amount;
 
-       /* Equal-offset guard: distance == 0 means fill == DMA (startup or
-        * exact lap).  Treat as 0, not total_size, so we never skip the wait. */
-       if (distance == 0) {
-           pthread_yield();
-           continue;
-       }
+        dma_offset = (Uint32)(read_dma_pos() - hidden->buffer_base);
+        distance   = (int32_t)dma_offset - (int32_t)fill_offset;
 
-       if (distance >= (hidden->chunk_size * 2)) {
-           break;  /* Safe window: at least 2 chunks before playhead catches us */
-       }
+        /* distance represents the FREE SPACE in the circular buffer */
+        if (distance < 0) distance += total;
+
+        /* 1. Equal-offset guard: treat as 0 free space at startup/exact lap */
+        if (distance == 0) {
+            pthread_yield();
+            continue;
+        }
+
+        /* 2. Safe window acquired (at least 2 chunks of distance) */
+        if (distance >= safe_dist) break;
+
+        /* 3. Stall Guard: safety if distance is stuck */
+        if (++spin_count > WAIT_SPIN_MAX) { 
+            SDL_Delay(1); 
+            continue; 
+        }
+
+        /* 4. Scheduling Logic:
+           Calculate bytes remaining until we hit the safe threshold.
+           If we need more than a chunk's worth of play-time, free the bus for a tick. */
+        wait_amount = safe_dist - distance;
         
-        pthread_yield(); /* FreeMiNT optimization */
+        if (wait_amount > hidden->chunk_size) {
+            SDL_Delay(2);
+        } else {
+            pthread_yield();
+        }
     }
 }
 
@@ -308,24 +357,32 @@ static void ATARI_PlayDevice(_THIS)
 {
     struct SDL_PrivateAudioData *hidden = this->hidden;
     Uint8 *filled_chunk = hidden->current_fill_ptr;
-    
-    if (hidden->swap_needed) swap_audio_bytes_asm(filled_chunk, hidden->chunk_size);
-    else if (hidden->xor_needed) convert_sign_bit(filled_chunk, hidden->chunk_size);
-    
+
+    /* Handle format conversion with bulk-movem loops */
+    if (hidden->swap_needed)
+        swap_audio_bytes_asm(filled_chunk, hidden->chunk_size);
+    else if (hidden->xor_needed)
+        convert_sign_bit_asm(filled_chunk, hidden->chunk_size);
+
+    /* Move fill pointer to the next chunk */
     hidden->current_fill_ptr += hidden->chunk_size;
-    if (hidden->current_fill_ptr >= hidden->buffer_end) {
+    if (hidden->current_fill_ptr >= hidden->buffer_end)
         hidden->current_fill_ptr = hidden->buffer_base;
-    }
 }
 
 static int ATARI_OpenDevice(SDL_AudioDevice *device, const char *devname)
 {
+    (void)devname;
     device->hidden = (struct SDL_PrivateAudioData *)SDL_malloc(sizeof(*device->hidden));
     if (!device->hidden) return SDL_OutOfMemory();
     SDL_memset(device->hidden, 0, sizeof(*device->hidden));
 
     mint_audio_open_hw(device, &device->spec);
-    if (!device->hidden->buffer_base) return -1;
+    if (!device->hidden->buffer_base) {
+        SDL_free(device->hidden);
+        device->hidden = NULL;
+        return -1;
+    }
     mint_audio_start_hw(device);
     return 0;
 }
@@ -336,21 +393,21 @@ static SDL_bool ATARI_Init(SDL_AudioDriverImpl *impl)
     if (Getcookie(C__SND, &cookie) != C_FOUND) return SDL_FALSE;
     if (!(cookie & (SND_16BIT | SND_8BIT))) return SDL_FALSE;
 
-    impl->OpenDevice = ATARI_OpenDevice;
-    impl->CloseDevice = ATARI_CloseDevice;
+    impl->OpenDevice                 = ATARI_OpenDevice;
+    impl->CloseDevice                = ATARI_CloseDevice;
+    impl->WaitDevice                 = ATARI_WaitDevice;
+    impl->GetDeviceBuf               = ATARI_GetDeviceBuf;
+    impl->PlayDevice                 = ATARI_PlayDevice;
     impl->OnlyHasDefaultOutputDevice = SDL_TRUE;
-    impl->WaitDevice = ATARI_WaitDevice;
-    impl->GetDeviceBuf = ATARI_GetDeviceBuf;
-    impl->PlayDevice = ATARI_PlayDevice;
-    impl->ProvidesOwnCallbackThread = SDL_FALSE;
-    impl->HasCaptureSupport = SDL_FALSE;
+    impl->ProvidesOwnCallbackThread  = SDL_FALSE;
+    impl->HasCaptureSupport          = SDL_FALSE;
 
     return SDL_TRUE;
 }
 
 AudioBootStrap ATARIAUDIO_bootstrap = {
     "mint_xbios",
-    "Atari XBIOS Audio (Drop-Free Polling)",
+    "Atari XBIOS Audio (Fully Optimized)",
     ATARI_Init,
     SDL_FALSE
 };
