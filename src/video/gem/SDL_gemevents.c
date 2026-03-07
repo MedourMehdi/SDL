@@ -248,7 +248,7 @@ static int HandleMessage(_THIS, const short *msg)
     window = _this->windows;
     while (window) {
         win_data = (SDL_WindowData *)window->driverdata;
-        if (win_data->handle == msg[3]) {
+        if (win_data && win_data->handle == msg[3]) {
             break;
         }
         window = window->next;

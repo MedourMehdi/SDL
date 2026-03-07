@@ -58,7 +58,9 @@
 #define SND_8BIT         0x02
 #define _THIS            SDL_AudioDevice *this
 #define NUM_CHUNKS       4      
-#define WAIT_SPIN_MAX    2000   
+
+static Uint32  dma_offset;
+static int32_t distance;
 
 typedef struct { int freq; int prescale; } FalconFreq;
 static const FalconFreq falcon_freq_table[] = {
@@ -305,46 +307,18 @@ static void ATARI_WaitDevice(_THIS)
     const int  safe_dist  = hidden->chunk_size * 2;
     const int  total      = hidden->total_size;
     Uint32     fill_offset;
-    int        spin_count = 0;
 
     fill_offset = (Uint32)(hidden->current_fill_ptr - hidden->buffer_base);
 
     while (hidden->playing) {
-        Uint32  dma_offset;
-        int32_t distance;
-        int     wait_amount;
 
         dma_offset = (Uint32)(read_dma_pos() - hidden->buffer_base);
         distance   = (int32_t)dma_offset - (int32_t)fill_offset;
 
         /* distance represents the FREE SPACE in the circular buffer */
         if (distance < 0) distance += total;
-
-        /* 1. Equal-offset guard: treat as 0 free space at startup/exact lap */
-        if (distance == 0) {
-            pthread_yield();
-            continue;
-        }
-
-        /* 2. Safe window acquired (at least 2 chunks of distance) */
         if (distance >= safe_dist) break;
-
-        /* 3. Stall Guard: safety if distance is stuck */
-        if (++spin_count > WAIT_SPIN_MAX) { 
-            SDL_Delay(1); 
-            continue; 
-        }
-
-        /* 4. Scheduling Logic:
-           Calculate bytes remaining until we hit the safe threshold.
-           If we need more than a chunk's worth of play-time, free the bus for a tick. */
-        wait_amount = safe_dist - distance;
-        
-        if (wait_amount > hidden->chunk_size) {
-            SDL_Delay(2);
-        } else {
-            pthread_yield();
-        }
+        SDL_Delay(1); /* Sleep briefly to yield the bus and avoid contention */
     }
 }
 
