@@ -335,6 +335,8 @@ static int HandleMessage(_THIS, const short *msg)
             SDL_SetWindowSize(window, (int)work_w, (int)work_h);
             break;
             }
+
+        case WM_ONTOP:
         case WM_TOPPED:
             mt_wind_set(msg[3], WF_TOP, 0, 0, 0, 0, sdl_global_aes);
             SDL_SendWindowEvent(window, SDL_WINDOWEVENT_FOCUS_GAINED, 0, 0);

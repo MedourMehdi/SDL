@@ -69,11 +69,13 @@
 #include <mint/falcon.h>
 #include <mint/mintbind.h>
 
+#include <pthread.h>
+
 /* --- Definitions --- */
 #define SND_16BIT           0x04
 #define SND_8BIT            0x02
 #define _THIS               SDL_AudioDevice *this
-#define NUM_CHUNKS          4
+#define NUM_CHUNKS          8
 
 typedef struct { int freq; int prescale; } FalconFreq;
 static const FalconFreq falcon_freq_table[] = {
@@ -108,83 +110,118 @@ struct SDL_PrivateAudioData {
    both initialisers must be updated together. */
 static inline void convert_sign_bit_asm(Uint8 *ptr, int count)
 {
-    int loops = count >> 4;       /* Number of 16-byte blocks */
-    int rem   = count & 15;       /* Remaining bytes (0-15) */
-    Uint8 *write_ptr = ptr;       /* In-place: same start address as ptr */
+#if defined(__mc68020__) || defined(__mc68030__) || defined(__mc68040__) || defined(__mc68060__)
+    /* 68020+ Ultra: 32-byte unroll (4 regs x 2 blocks). 
+       Power-of-two allows fast shifts (>> 5) instead of slow division. */
+    int loops = count >> 5;       
+    int rem   = count & 31;
+    Uint8 *write_ptr = ptr;
 
     if (loops > 0) {
         Uint32 mask = 0x80808080UL;
-        loops--; /* Adjust for dbra (stops at -1) */
+        loops--; /* Prepare for dbra */
         __asm__ volatile (
             "1:\n\t"
-            "   movem.l (%0)+, d0-d3\n\t"   /* Read 16 bytes, advance ptr */
-            "   eor.l   %2, d0\n\t"
-            "   eor.l   %2, d1\n\t"
-            "   eor.l   %2, d2\n\t"
-            "   eor.l   %2, d3\n\t"
-            "   move.l  d0, (%1)+\n\t"      /* Write 16 bytes, advance write_ptr */
-            "   move.l  d1, (%1)+\n\t"
-            "   move.l  d2, (%1)+\n\t"
-            "   move.l  d3, (%1)+\n\t"
+            "   movem.l (%0)+, d0-d3\n\t"   /* Read 16 bytes */
+            "   eor.l   %2, d0\n\t" "   eor.l   %2, d1\n\t"
+            "   eor.l   %2, d2\n\t" "   eor.l   %2, d3\n\t"
+            "   move.l  d0, (%1)+\n\t" "   move.l  d1, (%1)+\n\t"
+            "   move.l  d2, (%1)+\n\t" "   move.l  d3, (%1)+\n\t"
+            "   movem.l (%0)+, d0-d3\n\t"   /* Read next 16 bytes */
+            "   eor.l   %2, d0\n\t" "   eor.l   %2, d1\n\t"
+            "   eor.l   %2, d2\n\t" "   eor.l   %2, d3\n\t"
+            "   move.l  d0, (%1)+\n\t" "   move.l  d1, (%1)+\n\t"
+            "   move.l  d2, (%1)+\n\t" "   move.l  d3, (%1)+\n\t"
             "   dbra    %3, 1b\n\t"
             : "+a" (ptr), "+a" (write_ptr)
             : "d" (mask), "d" (loops)
             : "d0", "d1", "d2", "d3", "memory", "cc"
         );
     }
-
+#else
+    /* 68000: Standard 16-byte dbra path */
+    int loops = count >> 4;       
+    int rem   = count & 15;       
+    Uint8 *write_ptr = ptr;       
+    if (loops > 0) {
+        Uint32 mask = 0x80808080UL;
+        loops--; 
+        __asm__ volatile (
+            "1:\tmovem.l (%0)+, d0-d3\n\t"   
+            "eor.l %2, d0\n\teor.l %2, d1\n\teor.l %2, d2\n\teor.l %2, d3\n\t"
+            "move.l d0, (%1)+\n\tmove.l d1, (%1)+\n\t"
+            "move.l d2, (%1)+\n\tmove.l d3, (%1)+\n\t"
+            "dbra %3, 1b"
+            : "+a" (ptr), "+a" (write_ptr) : "d" (mask), "d" (loops)
+            : "d0", "d1", "d2", "d3", "memory", "cc"
+        );
+    }
+#endif
     if (rem > 0) {
         rem--;
-        __asm__ volatile (
-            "2:\n\t"
-            "   move.b  (%0), d0\n\t"
-            "   eor.b   #0x80, d0\n\t"
-            "   move.b  d0, (%0)+\n\t"
-            "   dbra    %1, 2b\n\t"
-            : "+a" (ptr) : "d" (rem) : "d0", "memory", "cc"
-        );
+        __asm__ volatile ("2:\teori.b #0x80, (%0)+\n\tdbra %1, 2b" 
+            : "+a" (ptr) : "d" (rem) : "memory", "cc");
     }
 }
 
-/* swap_audio_bytes_asm: Processes 16-byte blocks (8 samples) using movem.l
-   and the 4-cycle 'swap' trick, followed by a remainder loop for words.
-   NOTE: Same dual-pointer in-place assumption as convert_sign_bit_asm. */
 static inline void swap_audio_bytes_asm(Uint8 *ptr, int count)
 {
-    int loops = count >> 4;         /* Number of 16-byte blocks */
-    int rem   = (count & 15) >> 1;  /* Remaining 2-byte words */
-    Uint8 *write_ptr = ptr;         /* In-place: same start address as ptr */
+#if defined(__mc68020__) || defined(__mc68030__) || defined(__mc68040__) || defined(__mc68060__)
+    /* 68020+ Ultra: 32-byte unroll with full instruction interleaving.
+       Interleaving rol.w/swap hides execution latency on superscalar 040/060. */
+    int loops = count >> 5;         
+    int rem   = (count & 31) >> 1;  
+    Uint8 *write_ptr = ptr;
 
     if (loops > 0) {
         loops--;
         __asm__ volatile (
             "1:\n\t"
             "   movem.l (%0)+, d0-d3\n\t"
-            "   ror.w   #8, d0\n\t" "   swap    d0\n\t" "   ror.w   #8, d0\n\t" "   swap    d0\n\t"
-            "   ror.w   #8, d1\n\t" "   swap    d1\n\t" "   ror.w   #8, d1\n\t" "   swap    d1\n\t"
-            "   ror.w   #8, d2\n\t" "   swap    d2\n\t" "   ror.w   #8, d2\n\t" "   swap    d2\n\t"
-            "   ror.w   #8, d3\n\t" "   swap    d3\n\t" "   ror.w   #8, d3\n\t" "   swap    d3\n\t"
-            "   move.l  d0, (%1)+\n\t"
-            "   move.l  d1, (%1)+\n\t"
-            "   move.l  d2, (%1)+\n\t"
-            "   move.l  d3, (%1)+\n\t"
+            /* Interleave block 1 to avoid data stalls */
+            "   rol.w   #8, d0\n\t" "   rol.w   #8, d1\n\t" "   rol.w   #8, d2\n\t" "   rol.w   #8, d3\n\t"
+            "   swap    d0\n\t"     "   swap    d1\n\t"     "   swap    d2\n\t"     "   swap    d3\n\t"
+            "   rol.w   #8, d0\n\t" "   rol.w   #8, d1\n\t" "   rol.w   #8, d2\n\t" "   rol.w   #8, d3\n\t"
+            "   swap    d0\n\t"     "   swap    d1\n\t"     "   swap    d2\n\t"     "   swap    d3\n\t"
+            "   move.l  d0, (%1)+\n\t" "   move.l  d1, (%1)+\n\t" "   move.l  d2, (%1)+\n\t" "   move.l  d3, (%1)+\n\t"
+            
+            "   movem.l (%0)+, d0-d3\n\t"
+            /* Interleave block 2 */
+            "   rol.w   #8, d0\n\t" "   rol.w   #8, d1\n\t" "   rol.w   #8, d2\n\t" "   rol.w   #8, d3\n\t"
+            "   swap    d0\n\t"     "   swap    d1\n\t"     "   swap    d2\n\t"     "   swap    d3\n\t"
+            "   rol.w   #8, d0\n\t" "   rol.w   #8, d1\n\t" "   rol.w   #8, d2\n\t" "   rol.w   #8, d3\n\t"
+            "   swap    d0\n\t"     "   swap    d1\n\t"     "   swap    d2\n\t"     "   swap    d3\n\t"
+            "   move.l  d0, (%1)+\n\t" "   move.l  d1, (%1)+\n\t" "   move.l  d2, (%1)+\n\t" "   move.l  d3, (%1)+\n\t"
             "   dbra    %2, 1b\n\t"
-            : "+a" (ptr), "+a" (write_ptr)
-            : "d" (loops)
+            : "+a" (ptr), "+a" (write_ptr) : "d" (loops)
             : "d0", "d1", "d2", "d3", "memory", "cc"
         );
     }
-
+#else
+    /* 68000: 16-byte unroll */
+    int loops = count >> 4;         
+    int rem   = (count & 15) >> 1;  
+    Uint8 *write_ptr = ptr;         
+    if (loops > 0) {
+        loops--;
+        __asm__ volatile (
+            "1:\tmovem.l (%0)+, d0-d3\n\t"
+            "ror.w #8, d0\n\tswap d0\n\tror.w #8, d0\n\tswap d0\n\t"
+            "ror.w #8, d1\n\tswap d1\n\tror.w #8, d1\n\tswap d1\n\t"
+            "ror.w #8, d2\n\tswap d2\n\tror.w #8, d2\n\tswap d2\n\t"
+            "ror.w #8, d3\n\tswap d3\n\tror.w #8, d3\n\tswap d3\n\t"
+            "move.l d0, (%1)+\n\tmove.l d1, (%1)+\n\t"
+            "move.l d2, (%1)+\n\tmove.l d3, (%1)+\n\t"
+            "dbra %2, 1b"
+            : "+a" (ptr), "+a" (write_ptr) : "d" (loops)
+            : "d0", "d1", "d2", "d3", "memory", "cc"
+        );
+    }
+#endif
     if (rem > 0) {
         rem--;
-        __asm__ volatile (
-            "2:\n\t"
-            "   move.w  (%0), d0\n\t"
-            "   ror.w   #8, d0\n\t"
-            "   move.w  d0, (%0)+\n\t"
-            "   dbra    %1, 2b\n\t"
-            : "+a" (ptr) : "d" (rem) : "d0", "memory", "cc"
-        );
+        __asm__ volatile ("2:\tmove.w (%0), d0\n\trol.w #8, d0\n\tmove.w d0, (%0)+\n\tdbra %1, 2b" 
+            : "+a" (ptr) : "d" (rem) : "d0", "memory", "cc");
     }
 }
 
@@ -414,7 +451,8 @@ static void ATARI_WaitDevice(_THIS)
         if (distance < 0) distance += total;
         if (distance >= safe_dist) break;
 
-        SDL_Delay(1); /* Yield the bus briefly to avoid contention */
+        // SDL_Delay(5); /* Yield the bus briefly to avoid contention */
+        pthread_yield(); /* Yield the CPU to other threads (MiNT) */
     }
 }
 

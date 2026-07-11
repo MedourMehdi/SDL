@@ -229,7 +229,7 @@ int SDL_InitSubSystem(Uint32 flags)
 
 #if defined(__MINT__)
     /* Initialize threading before SDL */
-    // pthread_setup_threading_np();
+    pthread_setup_threading_np();
 
     if (gl_apid < 0) {
         gl_apid = mt_appl_init(sdl_global_aes);
