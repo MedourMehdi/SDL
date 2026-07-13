@@ -410,8 +410,6 @@ static void ATARI_CloseDevice(SDL_AudioDevice *device)
  * Spins until the DMA playback head has moved far enough ahead of
  * current_fill_ptr that it is safe to overwrite that chunk.
  *
- * The distance model is identical to the previous implementation:
- *
  *   distance = (dma_offset - fill_offset) mod total_size
  *
  * This is the amount of buffer the DMA still has to consume before it
@@ -419,9 +417,26 @@ static void ATARI_CloseDevice(SDL_AudioDevice *device)
  * runway before we're safe to write, giving the DMA one full chunk of
  * headroom beyond the one we're about to fill.
  *
- * The only change from the old version is the DMA position source:
- * read_dma_pos_buffptr() replaces the raw HW register ASM polling loop.
- * All arithmetic, safe_dist, and SDL_Delay(1) logic is unchanged.
+ * Silence pre-fill:
+ *   The instant distance >= safe_dist is the ONLY point in the entire
+ *   cycle where we have proof the DMA is not reading this chunk - the
+ *   check above just established it. That makes it the only safe place
+ *   to pre-fill the chunk with silence before handing it to GetDeviceBuf
+ *   and the mixer callback. If the callback fills the whole chunk with
+ *   real audio, this is simply overwritten and costs nothing extra. If
+ *   the game has stopped sending audio and the callback under-fills (or
+ *   isn't invoked at all, e.g. a paused/legacy callback path), the chunk
+ *   defaults to silence instead of replaying stale PCM from up to
+ *   (NUM_CHUNKS-1) cycles ago - which is what caused a short sound to
+ *   loop forever.
+ *
+ *   Do NOT move this into ATARI_PlayDevice. By the time PlayDevice runs,
+ *   the mixer callback has already executed against this same chunk (the
+ *   real per-cycle order is WaitDevice -> GetDeviceBuf -> callback ->
+ *   PlayDevice), so clearing there either wipes real audio the callback
+ *   just wrote, or - if targeting the chunk PlayDevice advances to next -
+ *   touches a chunk WaitDevice has not yet certified safe for the
+ *   following cycle. Either way reintroduces a live DMA read/write race.
  *
  * Buffer ownership diagram (NUM_CHUNKS = 4, chunk = C):
  *
@@ -449,9 +464,14 @@ static void ATARI_WaitDevice(_THIS)
 
         /* distance represents FREE SPACE ahead of the fill pointer */
         if (distance < 0) distance += total;
-        if (distance >= safe_dist) break;
+        if (distance >= safe_dist) {
+            /* Proven safe right now - default this chunk to silence
+               before the mixer callback gets a chance to (not) fill it. */
+            SDL_memset(hidden->current_fill_ptr, this->spec.silence,
+                       hidden->chunk_size);
+            break;
+        }
 
-        // SDL_Delay(5); /* Yield the bus briefly to avoid contention */
         pthread_yield(); /* Yield the CPU to other threads (MiNT) */
     }
 }
