@@ -68,6 +68,12 @@ typedef struct SDL_VideoData {
     int    use_identity_palette;   /* 1=fast path, 0=LUT remapping */
     int    palette_initialized;    /* 1=LUT is valid */
 
+    /* Saved palette – restored in VideoQuit so the GEM desktop
+     * returns to its original colours when the app exits.
+     * Indexed by hardware slot (same layout as hw_palette[]). */
+    Uint16 saved_palette[256];
+    int    saved_palette_count;    /* number of valid entries (= 1<<planes) */
+
 } SDL_VideoData;
 
 /* ============================================================

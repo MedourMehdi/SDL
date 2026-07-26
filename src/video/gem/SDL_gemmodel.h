@@ -72,6 +72,14 @@ typedef enum {
     ATARI_HW_IMAGINE
 } AtariHardwareType;
 
+/* VDI Environment Types */
+enum {
+    ATARI_VDI_ROM = 0,   /* Standard internal TOS VDI */
+    ATARI_VDI_GDOS,      /* Legacy GDOS (FontGDOS, SpeedoGDOS) */
+    ATARI_VDI_NVDI,      /* NVDI detected via cookie */
+    ATARI_VDI_FVDI       /* fVDI detected via cookie */
+};
+
 /* Hardware information structure */
 typedef struct {
     int cpu;
@@ -83,14 +91,13 @@ typedef struct {
     unsigned long vdo;
     unsigned long snd;
     AtariHardwareType hw_type;
+    int vdi_type;        /* Current VDI environment */
 } atari_hw_info;
 
 /* Global hardware info */
 extern atari_hw_info hw_info;
 
 /* Memory allocation types */
-// #define MX_STRAM 0x0000
-// #define MX_TTRAM 0x0001
 #define MX_PREFER_STRAM 0x0002
 #define MX_PREFER_TTRAM 0x0003
 

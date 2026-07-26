@@ -20,7 +20,7 @@
 */
 
 /* ============================================================================
-   SDL_gemvideo.c – GEM video driver core for SDL2
+   SDL_gemvideo.c - GEM video driver core for SDL2
    Medour Mehdi - 2026
    Architecture: Motorola 68000 / Atari ST-TT-Falcon
 
@@ -31,6 +31,12 @@
    All expensive queries (VDI format, hardware palette) are performed once
    in VideoInit and cached in SDL_VideoData for zero per-frame overhead.
 
+   Palette approach (identical to SDL 1.2 / Patrice Mandin):
+     vdi_index[hw_slot] = VDI pen number for that hardware slot.
+     vs_color(handle, vdi_index[i], rgb) writes hardware slot i.
+     vq_color(handle, vdi_index[i], 1, rgb) reads hardware slot i.
+     No Setcolor(), no VsetRGB(), no VgetRGB() needed.
+
    C90 compliant.
    ============================================================================ */
 
@@ -38,9 +44,23 @@
 #include "SDL_gemmodel.h"
 #include "SDL_gemkeys.h"
 #include <mint/osbind.h>
-#include <mt_gemx.h>  /* For vq_scrninfo */
+#include <mt_gemx.h>
 
 #ifdef SDL_VIDEO_DRIVER_GEM
+
+/* ============================================================
+   Global hardware slot -> VDI pen mapping.
+   Slots  0-15 : fixed GEM mapping (from Atari VDI documentation,
+                 same table used by Patrice Mandin in SDL 1.2).
+   Slots 16-254: identity (pen == slot).
+   Slot    255 : VDI pen 1 (GEM always maps pen 1 to hw slot 255).
+   Filled completely in GEM_VideoInit before any palette call.
+   ============================================================ */
+static unsigned char vdi_index[256] = {
+    0,  2,  3,  6,  4,  7,  5,  8,
+    9, 10, 11, 14, 12, 15, 13, 255
+    /* slots 16-255 filled at runtime in GEM_VideoInit */
+};
 
 static int GEM_ShowMessageBox(const SDL_MessageBoxData *messageboxdata, int *buttonid);
 
@@ -55,7 +75,10 @@ static void GEM_DeleteDevice(SDL_VideoDevice *device)
     }
 }
 
-static void GEM_WarpMouse(SDL_Window *window, int x, int y) { (void)window; (void)x; (void)y; }
+static void GEM_WarpMouse(SDL_Window *window, int x, int y)
+{
+    (void)window; (void)x; (void)y;
+}
 
 static Uint32 GEM_GetGlobalMouseState(int *x, int *y)
 {
@@ -84,11 +107,11 @@ static void GEM_RegisterMouseDriver(void)
 {
     SDL_Mouse *mouse = SDL_GetMouse();
     if (mouse) {
-        mouse->WarpMouse = GEM_WarpMouse;
+        mouse->WarpMouse          = GEM_WarpMouse;
         mouse->GetGlobalMouseState = GEM_GetGlobalMouseState;
-        mouse->ShowCursor = GEM_ShowCursor;
+        mouse->ShowCursor         = GEM_ShowCursor;
         mouse->SetRelativeMouseMode = GEM_SetRelativeMouseMode;
-        mouse->CaptureMouse = GEM_CaptureMouse;
+        mouse->CaptureMouse       = GEM_CaptureMouse;
     }
 }
 
@@ -110,34 +133,34 @@ SDL_VideoDevice *GEM_CreateDevice(void)
         return NULL;
     }
 
-    device->driverdata = data;
-    device->num_displays = 0;
+    device->driverdata    = data;
+    device->num_displays  = 0;
 
-    device->VideoInit = GEM_VideoInit;
-    device->VideoQuit = GEM_VideoQuit;
-    device->SetDisplayMode = GEM_SetDisplayMode;
-    device->CreateSDLWindow = GEM_CreateWindow;
-    device->GetWindowDisplayIndex = GEM_GetWindowDisplayIndex;
-    device->SetWindowTitle = GEM_SetWindowTitle;
+    device->VideoInit               = GEM_VideoInit;
+    device->VideoQuit               = GEM_VideoQuit;
+    device->SetDisplayMode          = GEM_SetDisplayMode;
+    device->CreateSDLWindow         = GEM_CreateWindow;
+    device->GetWindowDisplayIndex   = GEM_GetWindowDisplayIndex;
+    device->SetWindowTitle          = GEM_SetWindowTitle;
     device->CreateWindowFramebuffer = GEM_CreateWindowFramebuffer;
     device->UpdateWindowFramebuffer = GEM_UpdateWindowFramebuffer;
-    device->DestroyWindowFramebuffer = GEM_DestroyWindowFramebuffer;
-    device->DestroyWindow = GEM_DestroyWindow;
-    device->free = GEM_DeleteDevice;
+    device->DestroyWindowFramebuffer= GEM_DestroyWindowFramebuffer;
+    device->DestroyWindow           = GEM_DestroyWindow;
+    device->free                    = GEM_DeleteDevice;
 
-    device->SetWindowPosition = GEM_SetWindowPosition;
-    device->ShowWindow = GEM_ShowWindow;
-    device->HideWindow = GEM_HideWindow;
-    device->RaiseWindow = GEM_RaiseWindow;
-    device->MaximizeWindow = GEM_MaximizeWindow;
-    device->MinimizeWindow = GEM_MinimizeWindow;
-    device->RestoreWindow = GEM_RestoreWindow;
-    device->SetWindowBordered = GEM_SetWindowBordered;
-    device->SetWindowResizable = GEM_SetWindowResizable;
-    device->SetWindowSize = GEM_SetWindowSize;
-    device->SetWindowMinimumSize = GEM_SetWindowMinimumSize;
-    device->SetWindowMaximumSize = GEM_SetWindowMaximumSize;
-    device->SetWindowFullscreen  = GEM_SetWindowFullscreen;
+    device->SetWindowPosition       = GEM_SetWindowPosition;
+    device->ShowWindow              = GEM_ShowWindow;
+    device->HideWindow              = GEM_HideWindow;
+    device->RaiseWindow             = GEM_RaiseWindow;
+    device->MaximizeWindow          = GEM_MaximizeWindow;
+    device->MinimizeWindow          = GEM_MinimizeWindow;
+    device->RestoreWindow           = GEM_RestoreWindow;
+    device->SetWindowBordered       = GEM_SetWindowBordered;
+    device->SetWindowResizable      = GEM_SetWindowResizable;
+    device->SetWindowSize           = GEM_SetWindowSize;
+    device->SetWindowMinimumSize    = GEM_SetWindowMinimumSize;
+    device->SetWindowMaximumSize    = GEM_SetWindowMaximumSize;
+    device->SetWindowFullscreen     = GEM_SetWindowFullscreen;
 
     device->PumpEvents = GEM_PumpEvents;
 
@@ -146,11 +169,19 @@ SDL_VideoDevice *GEM_CreateDevice(void)
     return device;
 }
 
-/* ============================================
-   ONE-TIME PALETTE INITIALIZATION (m68000 optimized)
-   Called once in VideoInit - saves ~10,000 cycles per window
-   ============================================ */
+/* ============================================================
+   ONE-TIME PALETTE LUT INITIALISATION
+   Called once in VideoInit after the palette has been programmed.
+   Reads the hardware palette via vdi_index[] + vq_color() and
+   builds rgb332_to_hw[]: maps each RGB332 value to the nearest
+   hardware palette slot index.
 
+   Uses the same vdi_index[] approach as SDL 1.2 (Patrice Mandin):
+     vq_color(handle, vdi_index[hw_slot], 1, rgb)
+   This gives the colour actually stored in hardware slot hw_slot,
+   bypassing the VDI pen remapping that would occur if we passed
+   hw_slot directly.
+   ============================================================ */
 static void InitPaletteLUT(SDL_VideoData *data)
 {
     int i, p;
@@ -160,78 +191,65 @@ static void InitPaletteLUT(SDL_VideoData *data)
     int dr, dg, db, dist;
     int best, min_dist;
     Uint16 expected;
-    
+    short rgb[3];
+    int r4, g4, b4;
+
     num_colors = 1 << data->planes;
     if (num_colors > 256) num_colors = 256;
-    
-    SDL_LogInfo(SDL_LOG_CATEGORY_VIDEO, 
+
+    SDL_LogInfo(SDL_LOG_CATEGORY_VIDEO,
                 "GEM: Building palette LUT for %d colors (ONE-TIME)", num_colors);
-    
-    /* STEP 1: Read hardware palette via vq_color().
-     *
-     * Why NOT Setcolor(): ST/STe BIOS call, covers only hardware slots 0..15.
-     * Why NOT VgetRGB(): Falcon XBIOS only, returns raw hardware values before
-     *   the VDI index remapping is applied — wrong colour for slots 0..15.
-     *
-     * vq_color(handle, vdi_pen, set_flag, rgb[3]) reads by VDI pen index,
-     * but our planar buffer (fd_stand=0, device-specific) stores HARDWARE
-     * slot indices — vro_cpyfm feeds pixel values directly to the palette
-     * hardware, bypassing the VDI pen remapping.
-     *
-     * The VDI remaps hardware slots 0..15 to different VDI pen numbers.
-     * (Slots 16..254 are identity; slot 255 → VDI pen 1.)
-     * This is the same mapping used by vdi_index[] in Patrice Mandin's
-     * vdi_com.c reference implementation.
-     *
-     * To get the colour actually displayed at hardware slot hw:
-     *   vdi_pen = vdi_index[hw]
-     *   vq_color(handle, vdi_pen, 1, rgb)
-     *
-     * We store colours indexed by hardware slot so the distance-matcher
-     * produces hardware slot indices directly into rgb332_to_hw[]. */
-    {
-        /* Hardware slot → VDI pen mapping (from Atari VDI documentation).
-         * Indices 16..254 are identity; 255 → VDI pen 1. */
-        static const Uint8 vdi_index[16] = {
-            0, 2, 3, 6, 4, 7, 5, 8, 9, 10, 11, 14, 12, 15, 13, 255
-        };
-        short rgb[3];
-        int r4, g4, b4, vdi_pen;
-        for (i = 0; i < num_colors; i++) {
-            vdi_pen = (i < 16) ? (int)vdi_index[i] : (i == 255 ? 1 : i);
-            vq_color(data->vdi_handle, vdi_pen, 1, rgb);
-            /* VDI 0..1000 → 4-bit 0..15 */
-            r4 = ((int)rgb[0] * 15 + 500) / 1000;
-            g4 = ((int)rgb[1] * 15 + 500) / 1000;
-            b4 = ((int)rgb[2] * 15 + 500) / 1000;
-            if (r4 < 0) r4 = 0; else if (r4 > 15) r4 = 15;
-            if (g4 < 0) g4 = 0; else if (g4 > 15) g4 = 15;
-            if (b4 < 0) b4 = 0; else if (b4 > 15) b4 = 15;
-            /* Store indexed by hardware slot */
-            data->hw_palette[i] = (Uint16)((r4 << 8) | (g4 << 4) | b4);
-        }
+
+    /* -------------------------------------------------------
+       STEP 1: Read hardware palette.
+       vq_color(handle, vdi_index[i], 1, rgb) reads the colour
+       at hardware slot i by going through the correct VDI pen.
+       Store as 4-bit per channel in hw_palette[i].
+       ------------------------------------------------------- */
+    for (i = 0; i < num_colors; i++) {
+        vq_color(data->vdi_handle, (short)vdi_index[i], 1, rgb);
+
+        r4 = ((int)rgb[0] * 15 + 500) / 1000;
+        g4 = ((int)rgb[1] * 15 + 500) / 1000;
+        b4 = ((int)rgb[2] * 15 + 500) / 1000;
+        if (r4 < 0) r4 = 0; else if (r4 > 15) r4 = 15;
+        if (g4 < 0) g4 = 0; else if (g4 > 15) g4 = 15;
+        if (b4 < 0) b4 = 0; else if (b4 > 15) b4 = 15;
+
+        data->hw_palette[i] = (Uint16)((r4 << 8) | (g4 << 4) | b4);
     }
-    
-    /* STEP 2: Check for identity palette (RGB332 matches hardware) */
+
+    /* -------------------------------------------------------
+       STEP 2: Check for identity palette.
+       If we just programmed the palette to RGB332 layout, every
+       hw_palette[i] should exactly match the RGB332 colour for
+       index i.  If so we use the fast identity LUT path.
+
+       Expected encoding per slot i:
+         R3 = (i>>5)&7  -> 4-bit: R3<<1      (0,2,4,6,8,A,C,E)
+         G3 = (i>>2)&7  -> 4-bit: G3<<1
+         B2 = i&3       -> 4-bit: B2*5       (0,5,A,F)
+       ------------------------------------------------------- */
     data->use_identity_palette = 1;
     for (i = 0; i < num_colors; i++) {
-        /* Expected RGB332 in 4-bit format */
-        r = ((i >> 5) & 0x07) << 1;  /* 3-bit -> 4-bit (0-14) */
-        g = ((i >> 2) & 0x07) << 1;  /* 3-bit -> 4-bit (0-14) */
-        b = (i & 0x03) * 5;          /* 2-bit -> 4-bit (0,5,10,15) */
-        
+        r = ((i >> 5) & 0x07) << 1;
+        g = ((i >> 2) & 0x07) << 1;
+        b =  (i & 0x03) * 5;
+
         expected = (Uint16)((r << 8) | (g << 4) | b);
-        
+
         if (data->hw_palette[i] != expected) {
             data->use_identity_palette = 0;
-            SDL_LogInfo(SDL_LOG_CATEGORY_VIDEO, 
+            SDL_LogInfo(SDL_LOG_CATEGORY_VIDEO,
                         "GEM: Palette mismatch at %d (hw=0x%04X, expected=0x%04X)",
                         i, data->hw_palette[i], expected);
             break;
         }
     }
-    
-    /* STEP 3: Build LUT (identity or distance-matched) */
+
+    /* -------------------------------------------------------
+       STEP 3: Build rgb332_to_hw[] LUT.
+       ------------------------------------------------------- */
     if (data->use_identity_palette) {
         SDL_LogInfo(SDL_LOG_CATEGORY_VIDEO, "GEM: Using IDENTITY palette (fast path)");
         for (i = 0; i < 256; i++) {
@@ -240,44 +258,44 @@ static void InitPaletteLUT(SDL_VideoData *data)
     } else {
         SDL_LogInfo(SDL_LOG_CATEGORY_VIDEO, "GEM: Using distance-matched LUT");
         for (i = 0; i < 256; i++) {
-            /* SDL RGB332 color components */
             r = ((i >> 5) & 0x07) << 1;
             g = ((i >> 2) & 0x07) << 1;
-            b = (i & 0x03) * 5;
-            
-            best = 0;
+            b =  (i & 0x03) * 5;
+
+            best     = 0;
             min_dist = 0x7FFF;
-            
-            /* Find closest hardware color */
+
             for (p = 0; p < num_colors; p++) {
                 pr = (int)((data->hw_palette[p] >> 8) & 0x0F);
                 pg = (int)((data->hw_palette[p] >> 4) & 0x0F);
-                pb = (int)(data->hw_palette[p] & 0x0F);
-                
+                pb = (int)( data->hw_palette[p]        & 0x0F);
+
                 dr = r - pr;
                 dg = g - pg;
                 db = b - pb;
                 dist = dr*dr + dg*dg + db*db;
-                
+
                 if (dist < min_dist) {
                     min_dist = dist;
                     best = p;
-                    if (dist == 0) break;  /* Perfect match */
+                    if (dist == 0) break;
                 }
             }
-            
+
             data->rgb332_to_hw[i] = (Uint8)best;
         }
     }
-    
+
     data->palette_initialized = 1;
-    
-    /* Debug: Verify key colors */
+
     SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
-                 "GEM: Black(0x00)->%d White(0xFF)->%d Red(0xE0)->%d",
-                 data->rgb332_to_hw[0x00],
-                 data->rgb332_to_hw[0xFF],
-                 data->rgb332_to_hw[0xE0]);
+                 "GEM: Black(0x00)->%d White(0xFF)->%d Red(0xE0)->%d "
+                 "Green(0x1C)->%d Blue(0x03)->%d",
+                 (int)data->rgb332_to_hw[0x00],
+                 (int)data->rgb332_to_hw[0xFF],
+                 (int)data->rgb332_to_hw[0xE0],
+                 (int)data->rgb332_to_hw[0x1C],
+                 (int)data->rgb332_to_hw[0x03]);
 }
 
 int GEM_VideoInit(SDL_VideoDevice *this)
@@ -289,111 +307,208 @@ int GEM_VideoInit(SDL_VideoDevice *this)
     short work_out[57];
     int16_t screen_info[272];
     int i;
-    
+
     data = (SDL_VideoData *)this->driverdata;
-    
+
     if (gl_apid < 0) {
         return SDL_SetError("AES not initialized");
     }
-    
+
     /* Detect hardware */
     Atari_DetectHW();
-    SDL_LogInfo(SDL_LOG_CATEGORY_VIDEO, 
-                "GEM: Hardware: %s (CPU %d)", 
+    SDL_LogInfo(SDL_LOG_CATEGORY_VIDEO,
+                "GEM: Hardware: %s (CPU %d)",
                 Atari_GetMachineName(), hw_info.cpu);
-    
+
     /* Get desktop dimensions */
     mt_wind_get_grect(DESK, WF_WORKXYWH, (GRECT *)&data->work_x, sdl_global_aes);
     mt_wind_get_grect(DESK, WF_CURRXYWH, (GRECT *)&data->desk_x, sdl_global_aes);
-    
+
     /* Open VDI workstation */
     data->vdi_handle = mt_graf_handle(NULL, NULL, NULL, NULL, sdl_global_aes);
     if (data->vdi_handle < 1) {
         return SDL_SetError("Can't get VDI handle");
     }
-    
+
     for (i = 0; i < 10; i++) work_in[i] = 1;
     work_in[10] = 2;
-    
+
     v_opnvwk(work_in, &data->vdi_handle, work_out);
     if (data->vdi_handle == 0) {
         return SDL_SetError("Can't open VDI workstation");
     }
-    
+
     vq_extnd(data->vdi_handle, 1, work_out);
     data->planes = work_out[4];
-    
-    /* ============================================
-       VDI FORMAT QUERY (vq_scrninfo)
-       ============================================ */
+
+    /* -------------------------------------------------------
+       Complete the vdi_index[] table.
+       Slots 0-15 are already set by the static initialiser.
+       Slots 16-254: identity mapping (pen == slot).
+       Slot    255 : depends on VDI implementation:
+         - NVDI (and ROM VDI / GDOS): replicates TOS quirk where
+           hardware slot 255 is tied to VDI pen 1 (foreground/black).
+           Must use pen 1 to read or write slot 255.
+         - fVDI: strict 1:1 identity for all extended palette slots,
+           so pen 255 accesses hardware slot 255 directly.
+       Must be done before ANY palette read or write call.
+       ------------------------------------------------------- */
+    for (i = 16; i < 255; i++) {
+        vdi_index[i] = (unsigned char)i;
+    }
+    vdi_index[255] = (hw_info.vdi_type == ATARI_VDI_FVDI) ? 255 : 1;
+
+    SDL_LogInfo(SDL_LOG_CATEGORY_VIDEO,
+                "GEM: VDI type=%s  vdi_index[255]=%d",
+                (hw_info.vdi_type == ATARI_VDI_FVDI) ? "fVDI" :
+                (hw_info.vdi_type == ATARI_VDI_NVDI) ? "NVDI" :
+                (hw_info.vdi_type == ATARI_VDI_GDOS) ? "GDOS" : "ROM",
+                (int)vdi_index[255]);
+
+    /* -------------------------------------------------------
+       VDI FORMAT QUERY
+       ------------------------------------------------------- */
     vq_scrninfo(data->vdi_handle, screen_info);
-    data->vdi_pixel_format = screen_info[0];      /* 0, 1, or 2 */
-    data->vdi_bits_per_pixel = screen_info[4];    /* Actual bpp */
-    
+    data->vdi_pixel_format   = screen_info[0];
+    data->vdi_bits_per_pixel = screen_info[4];
+
     SDL_LogInfo(SDL_LOG_CATEGORY_VIDEO,
                 "GEM: VDI format=%d bpp=%d planes=%d",
                 data->vdi_pixel_format,
                 data->vdi_bits_per_pixel,
                 data->planes);
-    
-    /* ============================================
-       PALETTE INITIALIZATION
-       ============================================ */
+
+    /* -------------------------------------------------------
+       PALETTE INITIALISATION (8bpp and below only)
+
+       Step A – Save current palette so VideoQuit can restore it.
+                vq_color(handle, vdi_index[i], 1, rgb) reads the
+                colour at hardware slot i correctly.
+
+       Step B – Program palette to exact RGB332 layout so that
+                hardware slot i displays the RGB332 colour for
+                index i.  After this, InitPaletteLUT will find
+                a perfect identity match.
+
+                B2 VDI blue scaling uses exact boundary values
+                so the readback rounds correctly:
+                  B2=0 -> VDI 0    -> 4-bit 0  (= 0*5)
+                  B2=1 -> VDI 333  -> 4-bit 5  (= 1*5) *
+                  B2=2 -> VDI 667  -> 4-bit 10 (= 2*5) *
+                  B2=3 -> VDI 1000 -> 4-bit 15 (= 3*5)
+                (* 333*15/1000 = 4.995 -> rounds to 5 with +500 bias)
+
+       Step C – Build the LUT (will always be identity after B).
+       ------------------------------------------------------- */
     if (data->planes <= 8) {
+        short rgb[3];
+        int n_colors = 1 << data->planes;
+        if (n_colors > 256) n_colors = 256;
+
+        data->saved_palette_count = n_colors;
+
+        /* --- Step A: Save current palette ---
+         * Use set_flag=0 (read current value, not default) and raw
+         * pen index i — exactly as SDL 1.2 GEM_CommonSavePalette does.
+         * vdi_index[] is only needed for the program/restore steps. */
+        for (i = 0; i < n_colors; i++) {
+            int r4, g4, b4;
+            vq_color(data->vdi_handle, (short)i, 0, rgb);
+            r4 = ((int)rgb[0] * 15 + 500) / 1000;
+            g4 = ((int)rgb[1] * 15 + 500) / 1000;
+            b4 = ((int)rgb[2] * 15 + 500) / 1000;
+            if (r4 < 0) r4 = 0; else if (r4 > 15) r4 = 15;
+            if (g4 < 0) g4 = 0; else if (g4 > 15) g4 = 15;
+            if (b4 < 0) b4 = 0; else if (b4 > 15) b4 = 15;
+            data->saved_palette[i] = (Uint16)((r4 << 8) | (g4 << 4) | b4);
+        }
+        SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
+                     "GEM: Saved %d palette slots", n_colors);
+
+        /* --- Step B: Program RGB332 layout --- */
+        {
+            /* Exact VDI 0-1000 values for each 2-bit blue component.
+             * Using integer division alone (b2*1000/3) gives 333 for b2=1
+             * which rounds correctly to 4-bit 5 with the +500 bias in
+             * InitPaletteLUT, so the standard formula is fine here. */
+            for (i = 0; i < n_colors; i++) {
+                int r3 = (i >> 5) & 0x07;
+                int g3 = (i >> 2) & 0x07;
+                int b2 =  i       & 0x03;
+                rgb[0] = (short)(r3 * 1000 / 7);
+                rgb[1] = (short)(g3 * 1000 / 7);
+                rgb[2] = (short)(b2 * 1000 / 3);
+                vs_color(data->vdi_handle, (short)vdi_index[i], rgb);
+            }
+        }
+        SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
+                     "GEM: Programmed %d palette slots to RGB332 layout", n_colors);
+
+        /* --- Step C: Build LUT --- */
         InitPaletteLUT(data);
     }
-    
+
     /* Setup display mode */
     SDL_zero(mode);
-    
+
     switch (data->planes) {
         case 1:
         case 2:
         case 4:
-        case 8:
-            mode.format = SDL_PIXELFORMAT_RGB332;
-            break;
-        case 16:
-            mode.format = SDL_PIXELFORMAT_RGB565;
-            break;
-        case 24:
-            mode.format = SDL_PIXELFORMAT_RGB888;
-            break;
-        case 32:
-            mode.format = SDL_PIXELFORMAT_ARGB8888;
-            break;
-        default:
-            mode.format = SDL_PIXELFORMAT_RGB565;
-            break;
+        case 8:  mode.format = SDL_PIXELFORMAT_RGB332;  break;
+        case 16: mode.format = SDL_PIXELFORMAT_RGB565;  break;
+        case 24: mode.format = SDL_PIXELFORMAT_RGB888;  break;
+        case 32: mode.format = SDL_PIXELFORMAT_ARGB8888; break;
+        default: mode.format = SDL_PIXELFORMAT_RGB565;  break;
     }
-    
-    mode.w = data->work_w;
-    mode.h = data->work_h;
-    mode.refresh_rate = 60;
-    
+
+    mode.w            = data->work_w;
+    mode.h            = data->work_h;
+    mode.refresh_rate = 50;
+
     SDL_zero(display);
     display.desktop_mode = mode;
     display.current_mode = mode;
-    
+
     if (SDL_AddVideoDisplay(&display, 0) < 0) {
         v_clsvwk(data->vdi_handle);
         return -1;
     }
-    
+
     GEM_InitEvents(this);
-    
+
     return 0;
 }
 
 void GEM_VideoQuit(SDL_VideoDevice *this)
 {
     SDL_VideoData *data;
-    
+    int i;
+
     data = (SDL_VideoData *)this->driverdata;
     if (!data) return;
-    
+
     GEM_QuitEvents(this);
-    
+
+    /* -------------------------------------------------------
+       Restore the palette saved in VideoInit.
+       Use raw pen index i with vs_color — exactly as SDL 1.2
+       GEM_CommonRestorePalette does — because the save used
+       vq_color(handle, i, 0, rgb) with the same raw pen index.
+       ------------------------------------------------------- */
+    if (data->vdi_handle && data->saved_palette_count > 0) {
+        short rgb[3];
+        for (i = 0; i < data->saved_palette_count; i++) {
+            rgb[0] = (short)(((data->saved_palette[i] >> 8) & 0x0F) * 1000 / 15);
+            rgb[1] = (short)(((data->saved_palette[i] >> 4) & 0x0F) * 1000 / 15);
+            rgb[2] = (short)(( data->saved_palette[i]       & 0x0F) * 1000 / 15);
+            vs_color(data->vdi_handle, (short)i, rgb);
+        }
+        SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
+                     "GEM: Restored %d palette slots", data->saved_palette_count);
+        data->saved_palette_count = 0;
+    }
+
     if (data->vdi_handle) {
         v_clsvwk(data->vdi_handle);
         data->vdi_handle = 0;
@@ -402,9 +517,7 @@ void GEM_VideoQuit(SDL_VideoDevice *this)
 
 int GEM_SetDisplayMode(SDL_VideoDevice *this, SDL_VideoDisplay *display, SDL_DisplayMode *mode)
 {
-    (void)this;
-    (void)display;
-    (void)mode;
+    (void)this; (void)display; (void)mode;
     return 0;
 }
 
@@ -421,48 +534,33 @@ static int GEM_ShowMessageBox(const SDL_MessageBoxData *messageboxdata, int *but
     const char *btn_text;
     size_t btn_len;
     size_t remaining;
-    
+
     if (!messageboxdata || !messageboxdata->message) {
         return -1;
     }
-    
-    /* GEM supports max 3 buttons, clamp to valid range */
+
     num_buttons = messageboxdata->numbuttons;
-    if (num_buttons > 3) {
-        num_buttons = 3;
-    } else if (num_buttons < 1) {
-        num_buttons = 1;
-    }
-    
-    /* Build button string with | separators */
+    if (num_buttons > 3) num_buttons = 3;
+    else if (num_buttons < 1) num_buttons = 1;
+
     buttons_str[0] = '\0';
     pos = 0;
     remaining = sizeof(buttons_str) - 1;
-    
+
     for (i = 0; i < num_buttons && remaining > 0; i++) {
-        if (i > 0) {
-            if (remaining > 1) {
-                buttons_str[pos++] = '|';
-                buttons_str[pos] = '\0';
-                remaining--;
-            }
+        if (i > 0 && remaining > 1) {
+            buttons_str[pos++] = '|';
+            buttons_str[pos]   = '\0';
+            remaining--;
         }
-        
+
         btn_text = messageboxdata->buttons[i].text;
-        if (!btn_text) {
-            btn_text = "?";
-        }
-        
-        /* Truncate individual button text if needed (max ~20 chars for GEM) */
+        if (!btn_text) btn_text = "?";
+
         btn_len = SDL_strlen(btn_text);
-        if (btn_len > 20) {
-            btn_len = 20;
-        }
-        
-        if (btn_len > remaining) {
-            btn_len = remaining;
-        }
-        
+        if (btn_len > 20)        btn_len = 20;
+        if (btn_len > remaining) btn_len = remaining;
+
         if (btn_len > 0) {
             SDL_memcpy(buttons_str + pos, btn_text, btn_len);
             pos += (int)btn_len;
@@ -470,42 +568,35 @@ static int GEM_ShowMessageBox(const SDL_MessageBoxData *messageboxdata, int *but
             remaining -= btn_len;
         }
     }
-    
-    /* Map SDL message box flags to GEM icon */
-    /* 0=none, 1=warning(!), 2=question(?), 3=stop - use 1 as default */
+
     if (messageboxdata->flags & SDL_MESSAGEBOX_ERROR) {
-        icon = 3;  /* stop sign */
+        icon = 3;
     } else if (messageboxdata->flags & SDL_MESSAGEBOX_WARNING) {
-        icon = 1;  /* exclamation */
+        icon = 1;
     } else {
-        icon = 1;  /* default to warning (info icon=4 is AES 4.10+) */
+        icon = 1;
     }
-    
-    /* Copy and sanitize message: truncate and replace newlines with | */
+
     SDL_strlcpy(safe_msg, messageboxdata->message, sizeof(safe_msg));
-    
     for (i = 0; safe_msg[i] != '\0'; i++) {
         if (safe_msg[i] == '\n' || safe_msg[i] == '\r') {
             safe_msg[i] = '|';
         }
     }
-    
-    /* Build final alert string */
-    SDL_snprintf(alert_str, sizeof(alert_str), "[%d][%s][%s]", 
+
+    SDL_snprintf(alert_str, sizeof(alert_str), "[%d][%s][%s]",
                  icon, safe_msg, buttons_str);
-    
-    /* Default button is 1 (first button) */
+
     result = mt_form_alert(1, alert_str, sdl_global_aes);
-    
-    /* Map GEM result (1, 2, 3) back to SDL buttonid */
+
     if (buttonid) {
         if (result >= 1 && result <= num_buttons) {
             *buttonid = messageboxdata->buttons[result - 1].buttonid;
         } else {
-            *buttonid = -1;  /* Error or unexpected result */
+            *buttonid = -1;
         }
     }
-    
+
     return 0;
 }
 

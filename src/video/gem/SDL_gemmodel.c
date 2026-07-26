@@ -44,30 +44,63 @@
 #define MCH_HADES   0x00040000
 #define MCH_MASK    0xFFFF0000
 
-#define VDO_ST     0x0000
-#define VDO_STE    0x0001
-#define VDO_TT     0x0002
-#define VDO_F30    0x0003
-#define VDO_NOVA   0x0010
+#define VDO_ST      0x0000
+#define VDO_STE     0x0001
+#define VDO_TT      0x0002
+#define VDO_F30     0x0003
+#define VDO_NOVA    0x0010
 #define VDO_IMAGINE 0x0011
 
+/* VDI Cookies */
+#define C_NVDI      0x4E564449L /* 'NVDI' */
+#define C_fVDI      0x66564449L /* 'fVDI' */
+
 atari_hw_info hw_info;
+
+/* Assembly helper to check for legacy GDOS via TRAP #2 */
+static long check_vq_gdos(void)
+{
+    long ret;
+    __asm__ volatile (
+        "move.w #-2, d0\n\t"
+        "trap #2\n\t"
+        "move.l d0, %0"
+        : "=r"(ret)
+        :
+        : "d0", "d1", "d2", "a0", "a1", "a2"
+    );
+    return ret;
+}
 
 void Atari_DetectHW(void)
 {
     long cookie_mil = 0, cookie_hade = 0, cookie_nova = 0, cookie_imne = 0;
     long cookie_cpu = 0, cookie_vdo = 0, cookie_snd = 0, cookie_mch = 0;
+    long cookie_vdi = 0;
 
     /* Initialize to unknown */
     hw_info.cpu = ATARI_CPU_UNKNOWN;
     hw_info.video = ATARI_VIDEO_ST;
     hw_info.hw_type = ATARI_HW_UNKNOWN;
+    hw_info.vdi_type = ATARI_VDI_ROM; /* Assume base ROM VDI initially */
     hw_info.mch = 0;
     hw_info.pmmu = 0;
     hw_info.blitter = 0;
     hw_info.dsp = 0;
     hw_info.vdo = 0;
     hw_info.snd = 0;
+
+    /* VDI Detection (NVDI / fVDI / GDOS) */
+    if (Getcookie(C_NVDI, &cookie_vdi) == C_FOUND) {
+        hw_info.vdi_type = ATARI_VDI_NVDI;
+    } else if (Getcookie(C_fVDI, &cookie_vdi) == C_FOUND) {
+        hw_info.vdi_type = ATARI_VDI_FVDI;
+    } else {
+        /* Fall back to checking TRAP #2 dispatcher for legacy GDOS */
+        if (check_vq_gdos() != -2) {
+            hw_info.vdi_type = ATARI_VDI_GDOS;
+        }
+    }
 
     /* CPU detection */
     if (Getcookie(C__CPU, &cookie_cpu) == C_FOUND) {
