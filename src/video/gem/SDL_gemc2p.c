@@ -131,6 +131,72 @@ void Atari_ConvertARGB8888toRGB332(const Uint8 *src, Uint8 *dst,
     Atari_ConvertARGB8888toRGB332_asm(src, dst, width, height, src_pitch, dst_pitch);
 }
 
+void Atari_ConvertRGB888toRGB332(const Uint8 *src, Uint8 *dst,
+                                 int width, int height,
+                                 int src_pitch, int dst_pitch)
+{
+    if (!src || !dst || width <= 0 || height <= 0) return;
+    Atari_ConvertRGB888toRGB332_asm(src, dst, width, height, src_pitch, dst_pitch);
+}
+
+void Atari_ConvertBGR888toRGB332(const Uint8 *src, Uint8 *dst,
+                                 int width, int height,
+                                 int src_pitch, int dst_pitch)
+{
+    if (!src || !dst || width <= 0 || height <= 0) return;
+    Atari_ConvertBGR888toRGB332_asm(src, dst, width, height, src_pitch, dst_pitch);
+}
+
+/* ---- 24-bit (true 3-byte) ASM wrappers ---- */
+
+void Atari_ConvertRGB332toRGB888(const Uint8 *src, Uint8 *dst,
+                                 int width, int height,
+                                 int src_pitch, int dst_pitch)
+{
+    if (!src || !dst || width <= 0 || height <= 0) return;
+    Atari_ConvertRGB332toRGB888_asm(src, dst, width, height, src_pitch, dst_pitch);
+}
+
+void Atari_ConvertRGB332toBGR888(const Uint8 *src, Uint8 *dst,
+                                 int width, int height,
+                                 int src_pitch, int dst_pitch)
+{
+    if (!src || !dst || width <= 0 || height <= 0) return;
+    Atari_ConvertRGB332toBGR888_asm(src, dst, width, height, src_pitch, dst_pitch);
+}
+
+void Atari_ConvertBGRA8888toBGR888(const Uint8 *src, Uint8 *dst,
+                                   int width, int height,
+                                   int src_pitch, int dst_pitch)
+{
+    if (!src || !dst || width <= 0 || height <= 0) return;
+    Atari_ConvertBGRA8888toBGR888_asm(src, dst, width, height, src_pitch, dst_pitch);
+}
+
+void Atari_ConvertARGB8888toRGB888(const Uint8 *src, Uint8 *dst,
+                                   int width, int height,
+                                   int src_pitch, int dst_pitch)
+{
+    if (!src || !dst || width <= 0 || height <= 0) return;
+    Atari_ConvertARGB8888toRGB888_asm(src, dst, width, height, src_pitch, dst_pitch);
+}
+
+void Atari_ConvertBGRA8888toRGB888(const Uint8 *src, Uint8 *dst,
+                                   int width, int height,
+                                   int src_pitch, int dst_pitch)
+{
+    if (!src || !dst || width <= 0 || height <= 0) return;
+    Atari_ConvertBGRA8888toRGB888_asm(src, dst, width, height, src_pitch, dst_pitch);
+}
+
+void Atari_ConvertARGB8888toBGR888(const Uint8 *src, Uint8 *dst,
+                                   int width, int height,
+                                   int src_pitch, int dst_pitch)
+{
+    if (!src || !dst || width <= 0 || height <= 0) return;
+    Atari_ConvertARGB8888toBGR888_asm(src, dst, width, height, src_pitch, dst_pitch);
+}
+
 #else /* pure-C implementations */
 
 void Atari_ConvertRGB332toRGB565(const Uint8 *src, Uint16 *dst,
@@ -257,11 +323,53 @@ void Atari_ConvertBGRA8888toRGB332(const Uint8 *src, Uint8 *dst,
     }
 }
 
-#endif /* SDL_GEM_C2P_ASM */
+void Atari_ConvertRGB888toRGB332(const Uint8 *src, Uint8 *dst,
+                                 int width, int height,
+                                 int src_pitch, int dst_pitch)
+{
+    int y, x;
+    const int src_skip = src_pitch - (width * 3);
+    const int dst_skip = dst_pitch - width;
 
-/* ============================================================================
-   Section 3 – RGB332 → RGB888 (24-bit packed, no ASM variant needed)
-   ============================================================================ */
+    if (!src || !dst || width <= 0 || height <= 0) return;
+
+    for (y = 0; y < height; y++) {
+        for (x = 0; x < width; x++) {
+            Uint8 r = src[0];
+            Uint8 g = src[1];
+            Uint8 b = src[2];
+            *dst++ = (r & 0xE0) | ((g >> 5) << 2) | (b >> 6);
+            src += 3;
+        }
+        src += src_skip;
+        dst += dst_skip;
+    }
+}
+
+void Atari_ConvertBGR888toRGB332(const Uint8 *src, Uint8 *dst,
+                                 int width, int height,
+                                 int src_pitch, int dst_pitch)
+{
+    int y, x;
+    const int src_skip = src_pitch - (width * 3);
+    const int dst_skip = dst_pitch - width;
+
+    if (!src || !dst || width <= 0 || height <= 0) return;
+
+    for (y = 0; y < height; y++) {
+        for (x = 0; x < width; x++) {
+            Uint8 b = src[0];
+            Uint8 g = src[1];
+            Uint8 r = src[2];
+            *dst++ = (r & 0xE0) | ((g >> 5) << 2) | (b >> 6);
+            src += 3;
+        }
+        src += src_skip;
+        dst += dst_skip;
+    }
+}
+
+/* ---- 24-bit (true 3-byte) pure-C implementations ---- */
 
 void Atari_ConvertRGB332toRGB888(const Uint8 *src, Uint8 *dst,
                                  int width, int height,
@@ -280,15 +388,125 @@ void Atari_ConvertRGB332toRGB888(const Uint8 *src, Uint8 *dst,
         dst_row = dst + (y * dst_pitch);
         for (x = 0; x < width; x++) {
             packed = rgb332_to_rgb888_lut[src_row[x]];
-            dst_row[x*3 + 0] = (Uint8)((packed >> 16) & 0xFF);
-            dst_row[x*3 + 1] = (Uint8)((packed >>  8) & 0xFF);
-            dst_row[x*3 + 2] = (Uint8)( packed        & 0xFF);
+            dst_row[x*3 + 0] = (Uint8)((packed >> 16) & 0xFF); /* R */
+            dst_row[x*3 + 1] = (Uint8)((packed >>  8) & 0xFF); /* G */
+            dst_row[x*3 + 2] = (Uint8)( packed        & 0xFF); /* B */
         }
     }
 }
 
+void Atari_ConvertRGB332toBGR888(const Uint8 *src, Uint8 *dst,
+                                 int width, int height,
+                                 int src_pitch, int dst_pitch)
+{
+    int y, x;
+    const Uint8 *src_row;
+    Uint8       *dst_row;
+    Uint32       packed;
+
+    if (!src || !dst || width <= 0 || height <= 0) return;
+    if (!rgb332_tc_lut_initialized) Atari_InitRGB332toTrueColorLUTs();
+
+    for (y = 0; y < height; y++) {
+        src_row = src + (y * src_pitch);
+        dst_row = dst + (y * dst_pitch);
+        for (x = 0; x < width; x++) {
+            packed = rgb332_to_rgb888_lut[src_row[x]];
+            dst_row[x*3 + 0] = (Uint8)( packed        & 0xFF); /* B */
+            dst_row[x*3 + 1] = (Uint8)((packed >>  8) & 0xFF); /* G */
+            dst_row[x*3 + 2] = (Uint8)((packed >> 16) & 0xFF); /* R */
+        }
+    }
+}
+
+void Atari_ConvertBGRA8888toBGR888(const Uint8 *src, Uint8 *dst,
+                                   int width, int height,
+                                   int src_pitch, int dst_pitch)
+{
+    int y, x;
+    const Uint8 *src_row;
+    Uint8       *dst_row;
+
+    if (!src || !dst || width <= 0 || height <= 0) return;
+
+    for (y = 0; y < height; y++) {
+        src_row = src + (y * src_pitch);
+        dst_row = dst + (y * dst_pitch);
+        for (x = 0; x < width; x++) {
+            dst_row[x*3 + 0] = src_row[x*4 + 0]; /* B */
+            dst_row[x*3 + 1] = src_row[x*4 + 1]; /* G */
+            dst_row[x*3 + 2] = src_row[x*4 + 2]; /* R */
+        }
+    }
+}
+
+void Atari_ConvertARGB8888toRGB888(const Uint8 *src, Uint8 *dst,
+                                   int width, int height,
+                                   int src_pitch, int dst_pitch)
+{
+    int y, x;
+    const Uint8 *src_row;
+    Uint8       *dst_row;
+
+    if (!src || !dst || width <= 0 || height <= 0) return;
+
+    for (y = 0; y < height; y++) {
+        src_row = src + (y * src_pitch);
+        dst_row = dst + (y * dst_pitch);
+        for (x = 0; x < width; x++) {
+            dst_row[x*3 + 0] = src_row[x*4 + 1]; /* R */
+            dst_row[x*3 + 1] = src_row[x*4 + 2]; /* G */
+            dst_row[x*3 + 2] = src_row[x*4 + 3]; /* B */
+        }
+    }
+}
+
+void Atari_ConvertBGRA8888toRGB888(const Uint8 *src, Uint8 *dst,
+                                   int width, int height,
+                                   int src_pitch, int dst_pitch)
+{
+    int y, x;
+    const Uint8 *src_row;
+    Uint8       *dst_row;
+
+    if (!src || !dst || width <= 0 || height <= 0) return;
+
+    for (y = 0; y < height; y++) {
+        src_row = src + (y * src_pitch);
+        dst_row = dst + (y * dst_pitch);
+        for (x = 0; x < width; x++) {
+            dst_row[x*3 + 0] = src_row[x*4 + 2]; /* R */
+            dst_row[x*3 + 1] = src_row[x*4 + 1]; /* G */
+            dst_row[x*3 + 2] = src_row[x*4 + 0]; /* B */
+        }
+    }
+}
+
+void Atari_ConvertARGB8888toBGR888(const Uint8 *src, Uint8 *dst,
+                                   int width, int height,
+                                   int src_pitch, int dst_pitch)
+{
+    int y, x;
+    const Uint8 *src_row;
+    Uint8       *dst_row;
+
+    if (!src || !dst || width <= 0 || height <= 0) return;
+
+    for (y = 0; y < height; y++) {
+        src_row = src + (y * src_pitch);
+        dst_row = dst + (y * dst_pitch);
+        for (x = 0; x < width; x++) {
+            dst_row[x*3 + 0] = src_row[x*4 + 3]; /* B */
+            dst_row[x*3 + 1] = src_row[x*4 + 2]; /* G */
+            dst_row[x*3 + 2] = src_row[x*4 + 1]; /* R */
+        }
+    }
+}
+
+#endif /* SDL_GEM_C2P_ASM */
+
 /* ============================================================================
-   Section 4 – C2P lookup tables (pure-C path only)
+   Section 3 – C2P lookup tables (pure-C path only)
 
    c2p_plane_lut[pixel] stores the bitmask contribution of that pixel for
    each of the 8 bitplanes, pre-indexed by bit position within a 16-pixel

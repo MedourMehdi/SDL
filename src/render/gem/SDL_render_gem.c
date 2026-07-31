@@ -726,15 +726,13 @@ static int GEM_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture)
     if (GEM_AcquireWindowSurface(renderdata)) {
         win_surf = renderdata->window_surface;
         if (win_surf &&
-                ( 
-                ( texture->format == SDL_PIXELFORMAT_RGB332 && win_surf->format->format != SDL_PIXELFORMAT_RGB332 )
+            ( 
+                (texture->format == SDL_PIXELFORMAT_RGB332 && win_surf->format->format != SDL_PIXELFORMAT_RGB332)
                 ||
-                ( 
-                    (texture->format == SDL_PIXELFORMAT_BGRX8888 || texture->format == SDL_PIXELFORMAT_BGRA8888) 
-                    &&
-                    (win_surf->format->format != SDL_PIXELFORMAT_BGRX8888 && win_surf->format->format != SDL_PIXELFORMAT_BGRA8888 ) 
-                ) 
-                )
+                (texture->format == SDL_PIXELFORMAT_BGRX8888 && win_surf->format->format != SDL_PIXELFORMAT_BGRX8888)
+                || 
+                (texture->format == SDL_PIXELFORMAT_BGRA8888 && win_surf->format->format != SDL_PIXELFORMAT_BGRA8888) 
+            )
             ) {
         // if (win_surf && texture->format != win_surf->format->format) {        
             surface_format = win_surf->format->format;
@@ -812,7 +810,7 @@ static int GEM_UpdateTexture(SDL_Renderer *renderer, SDL_Texture *texture,
                 SDL_GetPixelFormatName(surface->format->format),
                 rect->x, rect->y, rect->w, rect->h, pitch);
     /* Fast path: BGRA8888 -> any supported native format */
-    if (data->src_format == SDL_PIXELFORMAT_BGRX8888 || data->src_format == SDL_PIXELFORMAT_BGRA8888) {
+    if (data->src_format == SDL_PIXELFORMAT_BGRA8888) {
         switch (surface->format->format) {
             case SDL_PIXELFORMAT_RGB332:
                 Atari_ConvertARGB8888toRGB332(src, dst_base, rect->w, rect->h,
@@ -824,6 +822,26 @@ static int GEM_UpdateTexture(SDL_Renderer *renderer, SDL_Texture *texture,
             case SDL_PIXELFORMAT_ARGB8888:
                 /* Falcon TrueColor: SDL handles BGRA8888->any correctly */
                 SDL_ConvertPixels(rect->w, rect->h,
+                                  SDL_PIXELFORMAT_ARGB8888, src, pitch,
+                                  surface->format->format, dst_base, surface->pitch);
+                converted = 1;
+                break;
+            default:
+                break; /* fall through to memcpy */
+        }
+    }
+    else if (data->src_format == SDL_PIXELFORMAT_BGRX8888) {
+        switch (surface->format->format) {
+            case SDL_PIXELFORMAT_RGB332:
+                Atari_ConvertARGB8888toRGB332(src, dst_base, rect->w, rect->h,
+                                              pitch, surface->pitch);
+                converted = 1;
+                break;
+            case SDL_PIXELFORMAT_RGB565:
+            case SDL_PIXELFORMAT_RGB888:
+            case SDL_PIXELFORMAT_ARGB8888:
+            case SDL_PIXELFORMAT_BGRA8888:
+                SDL_ConvertPixels(rect->w, rect->h,
                                   SDL_PIXELFORMAT_XRGB8888, src, pitch,
                                   surface->format->format, dst_base, surface->pitch);
                 converted = 1;
@@ -832,9 +850,49 @@ static int GEM_UpdateTexture(SDL_Renderer *renderer, SDL_Texture *texture,
                 break; /* fall through to memcpy */
         }
     }
+    else if (data->src_format == SDL_PIXELFORMAT_ARGB8888) {
+        switch (surface->format->format) {
+            case SDL_PIXELFORMAT_RGB332:
+                Atari_ConvertARGB8888toRGB332(src, dst_base, rect->w, rect->h,
+                                              pitch, surface->pitch);
+                converted = 1;
+                break;
+            case SDL_PIXELFORMAT_RGB565:
+            case SDL_PIXELFORMAT_RGB888:
+            case SDL_PIXELFORMAT_BGRA8888:
+            case SDL_PIXELFORMAT_BGR888:
+                SDL_ConvertPixels(rect->w, rect->h,
+                                  SDL_PIXELFORMAT_ARGB8888, src, pitch,
+                                  surface->format->format, dst_base, surface->pitch);
+                converted = 1;
+                break;
+            default:
+                break; /* fall through to memcpy */
+        }
+    }
+    else if (data->src_format == SDL_PIXELFORMAT_XRGB8888) {
+        switch (surface->format->format) {
+            case SDL_PIXELFORMAT_RGB332:
+                Atari_ConvertARGB8888toRGB332(src, dst_base, rect->w, rect->h,
+                                              pitch, surface->pitch);
+                converted = 1;
+                break;
+            case SDL_PIXELFORMAT_RGB565:
+            case SDL_PIXELFORMAT_ARGB8888:
+            case SDL_PIXELFORMAT_BGRA8888:
+            case SDL_PIXELFORMAT_BGR888:
+                /* Falcon TrueColor: SDL handles BGRA8888->any correctly */
+                SDL_ConvertPixels(rect->w, rect->h,
+                                  SDL_PIXELFORMAT_XRGB8888, src, pitch,
+                                  surface->format->format, dst_base, surface->pitch);
+                converted = 1;
+                break;
+            default:
+                break; /* fall through to memcpy */
+        }
+    }        
     /* Fast path: RGB332 -> TrueColor using precomputed LUTs */
-    else 
-    if (data->src_format == SDL_PIXELFORMAT_RGB332 &&
+    else if (data->src_format == SDL_PIXELFORMAT_RGB332 &&
              surface->format->format != SDL_PIXELFORMAT_RGB332) {
         
         switch (surface->format->format) {
@@ -851,8 +909,15 @@ static int GEM_UpdateTexture(SDL_Renderer *renderer, SDL_Texture *texture,
                 converted = 1;
                 break;
             case SDL_PIXELFORMAT_BGRA8888:
+                Atari_ConvertRGB332toBGRA8888(src, (Uint32 *)dst_base, rect->w, rect->h, pitch, surface->pitch);
+                converted = 1;
+                break;
             case SDL_PIXELFORMAT_BGRX8888:
                 Atari_ConvertRGB332toBGRA8888(src, (Uint32 *)dst_base, rect->w, rect->h, pitch, surface->pitch);
+                converted = 1;
+                break;
+            case SDL_PIXELFORMAT_BGR888:
+                Atari_ConvertRGB332toBGR888(src, dst_base, rect->w, rect->h, pitch, surface->pitch);
                 converted = 1;
                 break;                
         }
@@ -979,7 +1044,22 @@ static void GEM_UnlockTexture(SDL_Renderer *renderer, SDL_Texture *texture)
 
         src_pitch = data->lock_rect.w * SDL_BYTESPERPIXEL(data->src_format);
 
-        if (data->src_format == SDL_PIXELFORMAT_BGRX8888 || data->src_format == SDL_PIXELFORMAT_BGRA8888) {
+        if (data->src_format == SDL_PIXELFORMAT_BGRA8888) {
+            switch (surface->format->format) {
+                case SDL_PIXELFORMAT_RGB332:
+                    Atari_ConvertARGB8888toRGB332(src, dst_base,
+                                                    data->lock_rect.w, data->lock_rect.h,
+                                                    src_pitch, surface->pitch);
+                    break;
+                default:
+                    /* Falcon TrueColor: SDL handles BGRA8888->any correctly */
+                    SDL_ConvertPixels(data->lock_rect.w, data->lock_rect.h,
+                                      SDL_PIXELFORMAT_ARGB8888, src, src_pitch,
+                                      surface->format->format, dst_base, surface->pitch);
+                    break;
+            }
+        } 
+        else if (data->src_format == SDL_PIXELFORMAT_BGRX8888) {
             switch (surface->format->format) {
                 case SDL_PIXELFORMAT_RGB332:
                     Atari_ConvertARGB8888toRGB332(src, dst_base,
@@ -993,8 +1073,8 @@ static void GEM_UnlockTexture(SDL_Renderer *renderer, SDL_Texture *texture)
                                       surface->format->format, dst_base, surface->pitch);
                     break;
             }
-        } else 
-        if (data->src_format == SDL_PIXELFORMAT_RGB332) {
+        } 
+        else if (data->src_format == SDL_PIXELFORMAT_RGB332) {
             switch (surface->format->format) {
                 case SDL_PIXELFORMAT_RGB565:
                     Atari_ConvertRGB332toRGB565(src, (Uint16 *)dst_base,
