@@ -197,6 +197,14 @@ void Atari_ConvertARGB8888toBGR888(const Uint8 *src, Uint8 *dst,
     Atari_ConvertARGB8888toBGR888_asm(src, dst, width, height, src_pitch, dst_pitch);
 }
 
+void Atari_ConvertRGBA8888toRGB332(const Uint8 *src, Uint8 *dst,
+                                   int width, int height,
+                                   int src_pitch, int dst_pitch)
+{
+    if (!src || !dst || width <= 0 || height <= 0) return;
+    Atari_ConvertRGBA8888toRGB332_asm(src, dst, width, height, src_pitch, dst_pitch);
+}
+
 #else /* pure-C implementations */
 
 void Atari_ConvertRGB332toRGB565(const Uint8 *src, Uint16 *dst,
@@ -500,6 +508,30 @@ void Atari_ConvertARGB8888toBGR888(const Uint8 *src, Uint8 *dst,
             dst_row[x*3 + 1] = src_row[x*4 + 2]; /* G */
             dst_row[x*3 + 2] = src_row[x*4 + 1]; /* R */
         }
+    }
+}
+
+void Atari_ConvertRGBA8888toRGB332(const Uint8 *src, Uint8 *dst,
+                                   int width, int height,
+                                   int src_pitch, int dst_pitch)
+{
+    int y, x;
+    const int src_skip = src_pitch - (width * 4);
+    const int dst_skip = dst_pitch - width;
+
+    if (!src || !dst || width <= 0 || height <= 0) return;
+
+    for (y = 0; y < height; y++) {
+        for (x = 0; x < width; x++) {
+            Uint8 r = src[0];
+            Uint8 g = src[1];
+            Uint8 b = src[2];
+            /* src[3] = A, ignored */
+            *dst++ = (r & 0xE0) | ((g >> 5) << 2) | (b >> 6);
+            src += 4;
+        }
+        src += src_skip;
+        dst += dst_skip;
     }
 }
 

@@ -550,7 +550,7 @@ int GEM_CreateWindowFramebuffer(SDL_VideoDevice *this, SDL_Window *window,
     } else if (planes == 16) {
         new_format = SDL_PIXELFORMAT_RGB565;
     } else if (planes == 24) {
-        new_format = SDL_PIXELFORMAT_RGB888;
+        new_format = SDL_PIXELFORMAT_BGR24;
     } else {
         new_format = SDL_PIXELFORMAT_ARGB8888;
     }

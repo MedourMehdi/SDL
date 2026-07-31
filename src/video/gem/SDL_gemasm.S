@@ -1450,3 +1450,77 @@ _Atari_ConvertBGR888toRGB332_asm:
     movem.l (sp)+,a2-a6
     movem.l (sp)+,d2-d7
     rts
+
+| ============================================================================
+| Atari_ConvertRGBA8888toRGB332_asm
+|
+| C: void Atari_ConvertRGBA8888toRGB332_asm(const Uint8 *src, Uint8 *dst,
+|                                           int width, int height,
+|                                           int src_pitch, int dst_pitch)
+|
+| RGBA8888 in memory: [R][G][B][A] — big-endian layout.
+| Output: RGB332 = (R & 0xE0) | ((G >> 5) << 2) | (B >> 6)
+|
+| Register save: split movem d2-d7 / a2-a6 → parameters at offset 48.
+| d0: pixel accumulator
+| d1: temp
+| d4: width, d5: height, d6: pixel loop counter
+| a0: src, a1: dst, a2: src_skip, a3: dst_skip
+| ============================================================================
+
+    .text
+    .globl  _Atari_ConvertRGBA8888toRGB332_asm
+
+_Atari_ConvertRGBA8888toRGB332_asm:
+    movem.l d2-d7,-(sp)
+    movem.l a2-a6,-(sp)
+
+    move.l  48(sp),a0               | a0 = src
+    move.l  52(sp),a1               | a1 = dst
+    move.l  56(sp),d4               | d4 = width
+    move.l  60(sp),d5               | d5 = height
+    move.l  64(sp),a2               | a2 = src_pitch
+    move.l  68(sp),a3               | a3 = dst_pitch
+
+    | src_skip = src_pitch - width*4
+    move.l  d4,d0
+    lsl.l   #2,d0                   | width * 4
+    sub.l   d0,a2                   | a2 = src_skip
+
+    | dst_skip = dst_pitch - width
+    sub.l   d4,a3                   | a3 = dst_skip
+
+    subq.l  #1,d5
+    bmi.s   .rgba_rgb332_exit
+
+.rgba_rgb332_row:
+    move.l  d4,d6
+    subq.l  #1,d6
+
+.rgba_rgb332_pixel:
+    move.b  (a0)+,d0                | d0 = R
+    and.b   #0xE0,d0                | R & 0xE0
+
+    move.b  (a0)+,d1                | d1 = G
+    lsr.b   #5,d1
+    lsl.b   #2,d1                   | (G >> 5) << 2
+    or.b    d1,d0
+
+    move.b  (a0)+,d1                | d1 = B
+    lsr.b   #6,d1                   | B >> 6
+    or.b    d1,d0
+
+    move.b  d0,(a1)+                | store RGB332
+
+    addq.l  #1,a0                   | skip A byte
+
+    dbra    d6,.rgba_rgb332_pixel
+
+    add.l   a2,a0                   | src += src_skip
+    add.l   a3,a1                   | dst += dst_skip
+    dbra    d5,.rgba_rgb332_row
+
+.rgba_rgb332_exit:
+    movem.l (sp)+,a2-a6
+    movem.l (sp)+,d2-d7
+    rts

@@ -229,6 +229,10 @@ extern void Atari_ConvertBGR888toRGB332(const Uint8 *src, Uint8 *dst,
                                         int width, int height,
                                         int src_pitch, int dst_pitch);
 
+extern void Atari_ConvertRGBA8888toRGB332(const Uint8 *src, Uint8 *dst,
+                                          int width, int height,
+                                          int src_pitch, int dst_pitch);
+
 /* Shared LUT tables (initialised on first use) */
 extern Uint16 rgb332_to_rgb565_lut[256];
 extern Uint32 rgb332_to_rgb888_lut[256];
@@ -250,28 +254,28 @@ extern Uint32 rgb332_to_argb8888_lut[256];
    ASM C2P declarations (SDL_GEM_C2P_ASM only)
    ============================================================ */
 #ifdef SDL_GEM_C2P_ASM
-    /* LUT + C2P – these are the ONLY ASM C2P variants called from C code */
-    extern void Atari_C2P_8to1_LUT_asm(void*, void*, int, int, int, int, Uint8*);
-    extern void Atari_C2P_8to2_LUT_asm(void*, void*, int, int, int, int, Uint8*);
-    extern void Atari_C2P_8to4_LUT_asm(void*, void*, int, int, int, int, Uint8*);
-    extern void Atari_C2P_8to8_LUT_asm(void*, void*, int, int, int, int, Uint8*);
+   /* LUT + C2P – these are the ONLY ASM C2P variants called from C code */
+   extern void Atari_C2P_8to1_LUT_asm(void*, void*, int, int, int, int, Uint8*);
+   extern void Atari_C2P_8to2_LUT_asm(void*, void*, int, int, int, int, Uint8*);
+   extern void Atari_C2P_8to4_LUT_asm(void*, void*, int, int, int, int, Uint8*);
+   extern void Atari_C2P_8to8_LUT_asm(void*, void*, int, int, int, int, Uint8*);
 
-    /* TrueColor converters */
-    extern void Atari_ConvertRGB332toRGB565_asm(const Uint8 *src, Uint16 *dst,
+   /* TrueColor converters */
+   extern void Atari_ConvertRGB332toRGB565_asm(const Uint8 *src, Uint16 *dst,
+                                             int width, int height,
+                                             int src_pitch, int dst_pitch);
+   extern void Atari_ConvertRGB332toARGB8888_asm(const Uint8 *src, Uint32 *dst,
                                                 int width, int height,
                                                 int src_pitch, int dst_pitch);
-    extern void Atari_ConvertRGB332toARGB8888_asm(const Uint8 *src, Uint32 *dst,
-                                                  int width, int height,
-                                                  int src_pitch, int dst_pitch);
-    extern void Atari_ConvertRGB332toBGRA8888_asm(const Uint8 *src, Uint32 *dst,
-                                                  int width, int height,
-                                                  int src_pitch, int dst_pitch);                                                  
-    extern void Atari_ConvertARGB8888toRGB332_asm(const Uint8 *src, Uint8 *dst,
-                                                  int width, int height,
-                                                  int src_pitch, int dst_pitch);
-    extern void Atari_ConvertBGRA8888toRGB332_asm(const Uint8 *src, Uint8 *dst,
-                                                  int width, int height,
-                                                  int src_pitch, int dst_pitch);
+   extern void Atari_ConvertRGB332toBGRA8888_asm(const Uint8 *src, Uint32 *dst,
+                                                int width, int height,
+                                                int src_pitch, int dst_pitch);
+   extern void Atari_ConvertARGB8888toRGB332_asm(const Uint8 *src, Uint8 *dst,
+                                                int width, int height,
+                                                int src_pitch, int dst_pitch);
+   extern void Atari_ConvertBGRA8888toRGB332_asm(const Uint8 *src, Uint8 *dst,
+                                                int width, int height,
+                                                int src_pitch, int dst_pitch);
    /* 24-bit (true 3-byte) converters */
    extern void Atari_ConvertRGB332toRGB888_asm(const Uint8 *src, Uint8 *dst,
                                        int width, int height,
@@ -297,7 +301,10 @@ extern Uint32 rgb332_to_argb8888_lut[256];
                                        int src_pitch, int dst_pitch);
    extern void Atari_ConvertBGR888toRGB332_asm(const Uint8 *src, Uint8 *dst,
                                        int width, int height,
-                                       int src_pitch, int dst_pitch);                                                                                          
+                                       int src_pitch, int dst_pitch);
+   extern void Atari_ConvertRGBA8888toRGB332_asm(const Uint8 *src, Uint8 *dst,
+                                                int width, int height,
+                                                int src_pitch, int dst_pitch);                                 
 #endif /* SDL_GEM_C2P_ASM */
 
 /* ============================================================

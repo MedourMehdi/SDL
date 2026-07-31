@@ -457,7 +457,7 @@ int GEM_VideoInit(SDL_VideoDevice *this)
         case 4:
         case 8:  mode.format = SDL_PIXELFORMAT_RGB332;  break;
         case 16: mode.format = SDL_PIXELFORMAT_RGB565;  break;
-        case 24: mode.format = SDL_PIXELFORMAT_RGB24;  break;
+        case 24: mode.format = SDL_PIXELFORMAT_BGR24;  break;
         case 32: mode.format = SDL_PIXELFORMAT_ARGB8888; break;
         default: mode.format = SDL_PIXELFORMAT_RGB565;  break;
     }

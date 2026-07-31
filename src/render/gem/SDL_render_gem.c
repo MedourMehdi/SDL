@@ -61,6 +61,7 @@
 typedef struct GEM_RenderData {
     SDL_Surface *window_surface;
     SDL_Window *window;
+    SDL_Texture *render_target;    /* NULL = window, non-NULL = texture target */
     SDL_bool surface_dirty;
     SDL_bool vsync_enabled;
     int window_w;
@@ -312,6 +313,21 @@ static SDL_bool GEM_AcquireWindowSurface(GEM_RenderData *data)
     SDL_Surface *surface;
     int w, h;
 
+    /* If rendering to a target texture, use its surface directly */
+    if (data->render_target) {
+        GEM_TextureData *texdata = (GEM_TextureData *)data->render_target->driverdata;
+        if (texdata && texdata->surface) {
+            data->window_surface = texdata->surface;
+            data->window_w = texdata->surface->w;
+            data->window_h = texdata->surface->h;
+            data->surface_acquired = SDL_TRUE;
+            return SDL_TRUE;
+        }
+        data->surface_acquired = SDL_FALSE;
+        data->window_surface = NULL;
+        return SDL_FALSE;
+    }
+
     /* Always re-fetch: SDL may recreate the surface internally */
     SDL_GetWindowSize(data->window, &w, &h);
     data->window_w = w;
@@ -339,6 +355,14 @@ static int GEM_RenderPresent(SDL_Renderer *renderer)
     int result;
 
     if (!data || !data->surface_dirty) {
+        return 0;
+    }
+
+    /* If rendering to a texture target, nothing to push to the screen */
+    if (data->render_target) {
+        data->surface_dirty     = SDL_FALSE;
+        data->num_dirty_rects   = 0;
+        data->force_full_update = SDL_FALSE;
         return 0;
     }
 
@@ -681,17 +705,18 @@ static int GEM_CreateRenderer(SDL_Renderer *renderer, SDL_Window *window, Uint32
     renderer->DestroyRenderer   = GEM_DestroyRenderer;
 
     renderer->info.name = "gem";
-    renderer->info.flags = SDL_RENDERER_SOFTWARE;
+    renderer->info.flags = SDL_RENDERER_SOFTWARE | SDL_RENDERER_TARGETTEXTURE;
     if (data->vsync_enabled) {
         renderer->info.flags |= SDL_RENDERER_PRESENTVSYNC;
     }
-    renderer->info.num_texture_formats    = 6;
+    renderer->info.num_texture_formats    = 7;
     renderer->info.texture_formats[0]     = SDL_PIXELFORMAT_RGB332;
     renderer->info.texture_formats[1]     = SDL_PIXELFORMAT_RGB565;
     renderer->info.texture_formats[2]     = SDL_PIXELFORMAT_RGB888;
     renderer->info.texture_formats[3]     = SDL_PIXELFORMAT_BGRX8888;
     renderer->info.texture_formats[4]     = SDL_PIXELFORMAT_BGRA8888;
     renderer->info.texture_formats[5]     = SDL_PIXELFORMAT_ARGB8888;
+    renderer->info.texture_formats[6]     = SDL_PIXELFORMAT_RGBA8888;
     renderer->info.max_texture_width      = 4096;
     renderer->info.max_texture_height     = 4096;
 
@@ -731,7 +756,9 @@ static int GEM_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture)
                 ||
                 (texture->format == SDL_PIXELFORMAT_BGRX8888 && win_surf->format->format != SDL_PIXELFORMAT_BGRX8888)
                 || 
-                (texture->format == SDL_PIXELFORMAT_BGRA8888 && win_surf->format->format != SDL_PIXELFORMAT_BGRA8888) 
+                (texture->format == SDL_PIXELFORMAT_BGRA8888 && win_surf->format->format != SDL_PIXELFORMAT_BGRA8888)
+                ||
+                (texture->format == SDL_PIXELFORMAT_RGBA8888 && win_surf->format->format != SDL_PIXELFORMAT_RGBA8888)
             )
             ) {
         // if (win_surf && texture->format != win_surf->format->format) {        
@@ -921,6 +948,26 @@ static int GEM_UpdateTexture(SDL_Renderer *renderer, SDL_Texture *texture,
                 converted = 1;
                 break;                
         }
+    } else if (data->src_format == SDL_PIXELFORMAT_RGBA8888) {
+        switch (surface->format->format) {
+            case SDL_PIXELFORMAT_RGB332:
+                Atari_ConvertRGBA8888toRGB332(src, dst_base, rect->w, rect->h,
+                                            pitch, surface->pitch);
+                converted = 1;
+                break;
+            case SDL_PIXELFORMAT_RGB565:
+            case SDL_PIXELFORMAT_RGB888:
+            case SDL_PIXELFORMAT_ARGB8888:
+            case SDL_PIXELFORMAT_BGRA8888:
+            case SDL_PIXELFORMAT_BGR888:
+                SDL_ConvertPixels(rect->w, rect->h,
+                                  SDL_PIXELFORMAT_RGBA8888, src, pitch,
+                                  surface->format->format, dst_base, surface->pitch);
+                converted = 1;
+                break;
+            default:
+                break; /* fall through to memcpy */
+        }
     } else if (data->src_format != surface->format->format) {
         SDL_ConvertPixels(rect->w, rect->h,
                             data->src_format, src, pitch,
@@ -1105,6 +1152,30 @@ static void GEM_UnlockTexture(SDL_Renderer *renderer, SDL_Texture *texture)
                     break;
             }
         }
+        else if (data->src_format == SDL_PIXELFORMAT_RGBA8888) {
+            switch (surface->format->format) {
+                case SDL_PIXELFORMAT_RGB332:
+                    Atari_ConvertRGBA8888toRGB332(src, dst_base,
+                                                    data->lock_rect.w, data->lock_rect.h,
+                                                    src_pitch, surface->pitch);
+                    break;
+                case SDL_PIXELFORMAT_RGB565:
+                case SDL_PIXELFORMAT_RGB888:
+                case SDL_PIXELFORMAT_ARGB8888:
+                case SDL_PIXELFORMAT_BGRA8888:
+                case SDL_PIXELFORMAT_BGR888:
+                    SDL_ConvertPixels(data->lock_rect.w, data->lock_rect.h,
+                                      SDL_PIXELFORMAT_RGBA8888, src, src_pitch,
+                                      surface->format->format, dst_base, surface->pitch);
+                    break;
+                default:
+                    SDL_LogWarn(SDL_LOG_CATEGORY_RENDER,
+                                "GEM: UnlockTexture RGBA8888: unknown surface format 0x%X - "
+                                "frame will be corrupt",
+                                (unsigned)surface->format->format);
+                    break;
+            }
+        }
 
         if (SDL_MUSTLOCK(surface)) {
             SDL_UnlockSurface(surface);
@@ -1120,10 +1191,17 @@ static void GEM_SetTextureScaleMode(SDL_Renderer *renderer, SDL_Texture *texture
 
 static int GEM_SetRenderTarget(SDL_Renderer *renderer, SDL_Texture *texture)
 {
-    (void)renderer;
+    GEM_RenderData *data = (GEM_RenderData *)renderer->driverdata;
+
     if (texture != NULL) {
-        return SDL_Unsupported();
+        if (texture->access != SDL_TEXTUREACCESS_TARGET) {
+            return SDL_SetError("GEM: Texture not created with SDL_TEXTUREACCESS_TARGET");
+        }
+        data->render_target = texture;
+    } else {
+        data->render_target = NULL;
     }
+    data->surface_acquired = SDL_FALSE;
     return 0;
 }
 
@@ -1308,15 +1386,16 @@ SDL_RenderDriver GEM_RenderDriver = {
     GEM_CreateRenderer,
     {
         "gem",
-        SDL_RENDERER_SOFTWARE,
-        6,
+        SDL_RENDERER_SOFTWARE | SDL_RENDERER_TARGETTEXTURE,
+        7,
         {
             SDL_PIXELFORMAT_RGB332,
             SDL_PIXELFORMAT_RGB565,
             SDL_PIXELFORMAT_RGB888,
             SDL_PIXELFORMAT_BGRX8888,
             SDL_PIXELFORMAT_BGRA8888,
-            SDL_PIXELFORMAT_ARGB8888
+            SDL_PIXELFORMAT_ARGB8888,
+            SDL_PIXELFORMAT_RGBA8888
         },
         4096,
         4096
