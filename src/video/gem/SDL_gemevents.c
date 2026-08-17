@@ -28,6 +28,21 @@
    translation, window message dispatch (WM_REDRAW, WM_MOVED, WM_SIZED,
    WM_CLOSED), and modifier state tracking via Kbshift().
 
+   Mouse motion design
+   -------------------
+   evnt_multi always fills mx/my with the current cursor position regardless
+   of which event flags fired.  We call HandleMouse unconditionally after the
+   per-frame work so motion is reported on every pump cycle (every TIMER_MS),
+   not only on button events.  No extra AES call is needed.
+
+   WM_MOVED coordinate space
+   --------------------------
+   WM_MOVED msg[4..7] is the new BORDER rect (AES spec).  GEM_SetWindowPosition
+   treats window->x/y as WORK coordinates and recomputes the border via
+   GEM_BorderFromWork — so passing raw border coords causes the decoration
+   offsets to be added twice, drifting the window on every drag.  The handler
+   now calls wind_calc(WC_WORK) first, identical to WM_SIZED.
+
    C90 compliant.
    ============================================================================ */
 
@@ -40,7 +55,7 @@
 /* Release timeout for ALL keys.
  * AES autorepeat fires every ~30-50 ms.  (if KEY_RELEASE_TIMEOUT == 4) 4 frames @ 17 ms = 68 ms gives a
  * comfortable margin without perceptible input lag on release. */
-#define KEY_RELEASE_TIMEOUT  4
+#define KEY_RELEASE_TIMEOUT  17
 #define TIMER_MS            17
 
 /* ============================================
@@ -317,9 +332,29 @@ static int HandleMessage(_THIS, const short *msg)
             SDL_SendWindowEvent(window, SDL_WINDOWEVENT_CLOSE, 0, 0);
             break;
 
-        case WM_MOVED:
-            SDL_SetWindowPosition(window, msg[4], msg[5]);
+        case WM_MOVED: {
+            /* msg[4..7] is the new BORDER rect (AES spec for WM_MOVED).
+             * SDL_SetWindowPosition stores the value in window->x/y, which
+             * GEM_SetWindowPosition reads as WORK coordinates and feeds into
+             * GEM_BorderFromWork — double-counting the decoration offsets and
+             * drifting the window on every drag.
+             *
+             * Fix: mirror WM_SIZED — convert border→work first, then let
+             * SDL/GEM_SetWindowPosition do the work→border conversion once. */
+            short wx, wy, ww, wh;
+            mt_wind_calc(WC_WORK, win_data->win_type,
+                         msg[4], msg[5], msg[6], msg[7],
+                         &wx, &wy, &ww, &wh,
+                         sdl_global_aes);
+            /* Keep win_* in sync so GEM_CommitBorderRect has the right border
+             * geometry if anything calls it before the next wind_get. */
+            win_data->win_x = msg[4];
+            win_data->win_y = msg[5];
+            win_data->win_w = msg[6];
+            win_data->win_h = msg[7];
+            SDL_SetWindowPosition(window, (int)wx, (int)wy);
             break;
+        }
 
         case WM_SIZED: {
             short work_x, work_y, work_w, work_h;
@@ -492,9 +527,19 @@ void GEM_PumpEvents(_THIS)
     HandleModifiers();
     SDL_JoystickUpdate();
 
-    if (!gem_events) {
-        return;
-    }
+    /*
+     * Mouse motion — dispatch unconditionally.
+     * evnt_multi always fills mx/my with the current cursor position
+     * regardless of which event flags fired (AES spec).  Dispatching here
+     * instead of only inside MU_BUTTON means motion is reported every
+     * TIMER_MS even when no button event arrives, at zero extra AES cost.
+     * HandleMouse suppresses the SDL_SendMouseMotion call when position has
+     * not changed (last_mx/last_my guard), so this is never noisy.
+     *
+     * mb is updated below only when gem_events != 0.  Use the local new_mb
+     * returned by evnt_multi so the button state is always current here.
+     */
+    HandleMouse(_this, mx, my, new_mb);
 
     mb = new_mb;
 
@@ -506,9 +551,10 @@ void GEM_PumpEvents(_THIS)
         HandleMessage(_this, msg);
     }
 
-    if (gem_events & MU_BUTTON) {
-        HandleMouse(_this, mx, my, new_mb);
-    }
+    /* Button state changes are already handled by the unconditional
+     * HandleMouse call above.  This branch is retained as a no-op
+     * placeholder so the event flag accounting remains explicit. */
+    /* if (gem_events & MU_BUTTON) { } */
 }
 
 #endif /* SDL_VIDEO_DRIVER_GEM */

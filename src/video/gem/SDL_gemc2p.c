@@ -205,6 +205,22 @@ void Atari_ConvertRGBA8888toRGB332(const Uint8 *src, Uint8 *dst,
     Atari_ConvertRGBA8888toRGB332_asm(src, dst, width, height, src_pitch, dst_pitch);
 }
 
+void Atari_ConvertRGB565toRGB332(const Uint8 *src, Uint8 *dst,
+                                 int width, int height,
+                                 int src_pitch, int dst_pitch)
+{
+    if (!src || !dst || width <= 0 || height <= 0) return;
+    Atari_ConvertRGB565toRGB332_asm(src, dst, width, height, src_pitch, dst_pitch);
+}
+
+void Atari_ConvertBGR565toRGB332(const Uint8 *src, Uint8 *dst,
+                                 int width, int height,
+                                 int src_pitch, int dst_pitch)
+{
+    if (!src || !dst || width <= 0 || height <= 0) return;
+    Atari_ConvertBGR565toRGB332_asm(src, dst, width, height, src_pitch, dst_pitch);
+}
+
 #else /* pure-C implementations */
 
 void Atari_ConvertRGB332toRGB565(const Uint8 *src, Uint16 *dst,
@@ -532,6 +548,52 @@ void Atari_ConvertRGBA8888toRGB332(const Uint8 *src, Uint8 *dst,
         }
         src += src_skip;
         dst += dst_skip;
+    }
+}
+
+void Atari_ConvertRGB565toRGB332(const Uint8 *src, Uint8 *dst,
+                                 int width, int height,
+                                 int src_pitch, int dst_pitch)
+{
+    int y, x;
+    const Uint16 *src_row;
+    Uint8 *dst_row;
+
+    if (!src || !dst || width <= 0 || height <= 0) return;
+
+    for (y = 0; y < height; y++) {
+        src_row = (const Uint16 *)(src + (y * src_pitch));
+        dst_row = dst + (y * dst_pitch);
+        for (x = 0; x < width; x++) {
+            Uint16 pixel = src_row[x];
+            Uint8 r = (pixel >> 11) & 0x1F;
+            Uint8 g = (pixel >> 5) & 0x3F;
+            Uint8 b = pixel & 0x1F;
+            dst_row[x] = ((r >> 2) << 5) | ((g >> 3) << 2) | (b >> 3);
+        }
+    }
+}
+
+void Atari_ConvertBGR565toRGB332(const Uint8 *src, Uint8 *dst,
+                                 int width, int height,
+                                 int src_pitch, int dst_pitch)
+{
+    int y, x;
+    const Uint16 *src_row;
+    Uint8 *dst_row;
+
+    if (!src || !dst || width <= 0 || height <= 0) return;
+
+    for (y = 0; y < height; y++) {
+        src_row = (const Uint16 *)(src + (y * src_pitch));
+        dst_row = dst + (y * dst_pitch);
+        for (x = 0; x < width; x++) {
+            Uint16 pixel = src_row[x];
+            Uint8 b = (pixel >> 11) & 0x1F;
+            Uint8 g = (pixel >> 5) & 0x3F;
+            Uint8 r = pixel & 0x1F;
+            dst_row[x] = ((r >> 2) << 5) | ((g >> 3) << 2) | (b >> 3);
+        }
     }
 }
 

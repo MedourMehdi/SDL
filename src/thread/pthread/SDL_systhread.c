@@ -194,7 +194,7 @@ int SDL_SYS_SetThreadPriority(SDL_ThreadPriority priority)
 {
 #ifdef __MINT__
 /* MiNT priorities range from 0 (lowest) to 32 (highest) */
-#define MINT_PRIORITY_MIN 0
+#define MINT_PRIORITY_MIN 2
 #define MINT_PRIORITY_MAX 32
 #define MINT_PRIORITY_NORMAL 16
 

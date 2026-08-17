@@ -1524,3 +1524,162 @@ _Atari_ConvertRGBA8888toRGB332_asm:
     movem.l (sp)+,a2-a6
     movem.l (sp)+,d2-d7
     rts
+
+| ============================================================================
+| Atari_ConvertRGB565toRGB332_asm - 68000-optimized RGB565 → RGB332
+|
+| C: void Atari_ConvertRGB565toRGB332_asm(const Uint8 *src, Uint8 *dst,
+|                                         int width, int height,
+|                                         int src_pitch, int dst_pitch)
+|
+| RGB565 in memory (big-endian): [RRRRRGGG][GGGBBBBB]
+| Quantize: R3=(R5>>2), G3=(G6>>3), B2=(B5>>3)
+| Pack:     (R3<<5) | (G3<<2) | B2
+| ============================================================================
+
+    .text
+    .globl  _Atari_ConvertRGB565toRGB332_asm
+
+_Atari_ConvertRGB565toRGB332_asm:
+    movem.l d2-d7/a2-a6,-(sp)
+
+    move.l  48(sp),a0               | a0 = src
+    move.l  52(sp),a1               | a1 = dst
+    move.l  56(sp),d4               | d4 = width
+    move.l  60(sp),d5               | d5 = height
+    move.l  64(sp),d6               | d6 = src_pitch
+    move.l  68(sp),d7               | d7 = dst_pitch
+
+    | src_skip = src_pitch - width*2
+    move.l  d4,d0
+    lsl.l   #1,d0                   | width * 2
+    move.l  d6,a2
+    sub.l   d0,a2                   | a2 = src_skip
+
+    | dst_skip = dst_pitch - width
+    move.l  d7,a3
+    sub.l   d4,a3                   | a3 = dst_skip
+
+    subq.l  #1,d5
+    bmi.s   .rgb565_332_exit
+
+.rgb565_332_row:
+    move.l  d4,d6
+    subq.l  #1,d6
+
+.rgb565_332_pixel:
+    move.w  (a0)+,d0                | d0 = RGB565 word
+
+    | Extract R5 (bits 15-11) → R3
+    move.w  d0,d1
+    lsr.w   #8,d1                   | d1 = 00000000 RRRRRGGG
+    lsr.b   #3,d1                   | d1 = 000RRRRR = R5
+    lsr.b   #2,d1                   | d1 = 00000RRR = R3
+    lsl.b   #5,d1                   | d1 = RRR00000
+
+    | Extract G6 (bits 10-5) → G3
+    move.w  d0,d2
+    lsr.w   #5,d2                   | d2 = 00000GGGGGGXXXXX
+    and.b   #0x3F,d2                | d2 = 00GGGGGG = G6
+    lsr.b   #3,d2                   | d2 = 00000GGG = G3
+    lsl.b   #2,d2                   | d2 = 000GGG00 = G3<<2
+
+    | Extract B5 (bits 4-0) → B2
+    move.b  d0,d3                   | d3 = low byte = GGGBBBBB
+    and.b   #0x1F,d3                | d3 = 000BBBBB = B5
+    lsr.b   #3,d3                   | d3 = 000000BB = B2
+
+    | Pack RGB332
+    or.b    d2,d1                   | d1 = RRRGGG00
+    or.b    d3,d1                   | d1 = RRRGGGBB
+    move.b  d1,(a1)+
+
+    dbra    d6,.rgb565_332_pixel
+
+    add.l   a2,a0                   | src += src_skip
+    add.l   a3,a1                   | dst += dst_skip
+    dbra    d5,.rgb565_332_row
+
+.rgb565_332_exit:
+    movem.l (sp)+,d2-d7/a2-a6
+    rts
+
+| ============================================================================
+| Atari_ConvertBGR565toRGB332_asm - 68000-optimized BGR565 → RGB332
+|
+| C: void Atari_ConvertBGR565toRGB332_asm(const Uint8 *src, Uint8 *dst,
+|                                         int width, int height,
+|                                         int src_pitch, int dst_pitch)
+|
+| BGR565 in memory (big-endian): [BBBBBGGG][GGGRRRRR]
+| Quantize: R3=(R5>>2), G3=(G6>>3), B2=(B5>>3)
+| Pack:     (R3<<5) | (G3<<2) | B2
+| ============================================================================
+
+    .text
+    .globl  _Atari_ConvertBGR565toRGB332_asm
+
+_Atari_ConvertBGR565toRGB332_asm:
+    movem.l d2-d7/a2-a6,-(sp)
+
+    move.l  48(sp),a0               | a0 = src
+    move.l  52(sp),a1               | a1 = dst
+    move.l  56(sp),d4               | d4 = width
+    move.l  60(sp),d5               | d5 = height
+    move.l  64(sp),d6               | d6 = src_pitch
+    move.l  68(sp),d7               | d7 = dst_pitch
+
+    | src_skip = src_pitch - width*2
+    move.l  d4,d0
+    lsl.l   #1,d0                   | width * 2
+    move.l  d6,a2
+    sub.l   d0,a2                   | a2 = src_skip
+
+    | dst_skip = dst_pitch - width
+    move.l  d7,a3
+    sub.l   d4,a3                   | a3 = dst_skip
+
+    subq.l  #1,d5
+    bmi.s   .bgr565_332_exit
+
+.bgr565_332_row:
+    move.l  d4,d6
+    subq.l  #1,d6
+
+.bgr565_332_pixel:
+    move.w  (a0)+,d0                | d0 = BGR565 word
+
+    | Extract R5 (bits 4-0) → R3
+    move.b  d0,d1                   | d1 = low byte = GGGRRRRR
+    and.b   #0x1F,d1                | d1 = 000RRRRR = R5
+    lsr.b   #2,d1                   | d1 = 00000RRR = R3
+    lsl.b   #5,d1                   | d1 = RRR00000
+
+    | Extract G6 (bits 10-5) → G3
+    move.w  d0,d2
+    lsr.w   #5,d2                   | d2 = 00000GGGGGGXXXXX
+    and.b   #0x3F,d2                | d2 = 00GGGGGG = G6
+    lsr.b   #3,d2                   | d2 = 00000GGG = G3
+    lsl.b   #2,d2                   | d2 = 000GGG00 = G3<<2
+
+    | Extract B5 (bits 15-11) → B2
+    move.w  d0,d3
+    lsr.w   #8,d3                   | d3 = high byte = BBBBBGGG
+    lsr.b   #3,d3                   | d3 = 000BBBBB = B5
+    lsr.b   #3,d3                   | d3 = 000000BB = B2
+
+    | Pack RGB332
+    or.b    d2,d1                   | d1 = RRRGGG00
+    or.b    d3,d1                   | d1 = RRRGGGBB
+    move.b  d1,(a1)+
+
+    dbra    d6,.bgr565_332_pixel
+
+    add.l   a2,a0                   | src += src_skip
+    add.l   a3,a1                   | dst += dst_skip
+    dbra    d5,.bgr565_332_row
+
+.bgr565_332_exit:
+    movem.l (sp)+,d2-d7/a2-a6
+    rts
+    

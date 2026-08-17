@@ -545,6 +545,16 @@ int GEM_CreateWindowFramebuffer(SDL_VideoDevice *this, SDL_Window *window,
     SDL_GetWindowSize(window, &w, &h);
     
     /* Determine format */
+    // if (planes <= 8) {
+    //     new_format = SDL_PIXELFORMAT_RGB332;
+    // } else if (planes == 16) {
+    //     new_format = SDL_PIXELFORMAT_RGB565;
+    // } else if (planes == 24) {
+    //     new_format = SDL_PIXELFORMAT_RGB24;
+    // } else {
+    //     new_format = SDL_PIXELFORMAT_ARGB8888;
+    // }
+
     if (planes <= 8) {
         new_format = SDL_PIXELFORMAT_RGB332;
     } else if (planes == 16) {
@@ -553,8 +563,8 @@ int GEM_CreateWindowFramebuffer(SDL_VideoDevice *this, SDL_Window *window,
         new_format = SDL_PIXELFORMAT_BGR24;
     } else {
         new_format = SDL_PIXELFORMAT_ARGB8888;
-    }
-    
+    }    
+
     /* Reuse existing buffer if size matches */
     if (data->raw_buffer && data->buffer && 
         w == data->final_mfdb.fd_w && h == data->final_mfdb.fd_h && data->buffer_pitch > 0) {

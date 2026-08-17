@@ -38,10 +38,10 @@
 /* Cookie definitions */
 #define MCH_ST      0x00000000
 #define MCH_STE     0x00010000
-#define MCH_TT      0x00020000
-#define MCH_F30     0x00030000
-#define MCH_MILAN   0x00050000
-#define MCH_HADES   0x00040000
+#define MCH_TT      0x00020000   /* TT, Hades, Medusa T40 */
+#define MCH_F30     0x00030000   /* Falcon030 / Sparrow */
+#define MCH_MILAN   0x00040000   /* Milan */
+#define MCH_ARANYM  0x00050000   /* ARAnyM >= 0.8.5beta */
 #define MCH_MASK    0xFFFF0000
 
 #define VDO_ST      0x0000
@@ -54,6 +54,24 @@
 /* VDI Cookies */
 #define C_NVDI      0x4E564449L /* 'NVDI' */
 #define C_fVDI      0x66564449L /* 'fVDI' */
+
+/* Standard BIOS cookies – define explicitly in case mint/cookie.h
+   is incomplete or uses wrong values on some toolchains. */
+#ifndef C__CPU
+#define C__CPU      0x5F435055L /* '_CPU' */
+#endif
+#ifndef C__VDO
+#define C__VDO      0x5F56444FL /* '_VDO' */
+#endif
+#ifndef C__MCH
+#define C__MCH      0x5F4D4348L /* '_MCH' */
+#endif
+#ifndef C__SND
+#define C__SND      0x5F534E44L /* '_SND' */
+#endif
+#ifndef C__MIL
+#define C__MIL      0x5F4D494CL /* '_MIL' */
+#endif
 
 atari_hw_info hw_info;
 
@@ -82,7 +100,7 @@ void Atari_DetectHW(void)
     hw_info.cpu = ATARI_CPU_UNKNOWN;
     hw_info.video = ATARI_VIDEO_ST;
     hw_info.hw_type = ATARI_HW_UNKNOWN;
-    hw_info.vdi_type = ATARI_VDI_ROM; /* Assume base ROM VDI initially */
+    hw_info.vdi_type = ATARI_VDI_ROM;
     hw_info.mch = 0;
     hw_info.pmmu = 0;
     hw_info.blitter = 0;
@@ -96,7 +114,6 @@ void Atari_DetectHW(void)
     } else if (Getcookie(C_fVDI, &cookie_vdi) == C_FOUND) {
         hw_info.vdi_type = ATARI_VDI_FVDI;
     } else {
-        /* Fall back to checking TRAP #2 dispatcher for legacy GDOS */
         if (check_vq_gdos() != -2) {
             hw_info.vdi_type = ATARI_VDI_GDOS;
         }
@@ -104,7 +121,6 @@ void Atari_DetectHW(void)
 
     /* CPU detection */
     if (Getcookie(C__CPU, &cookie_cpu) == C_FOUND) {
-        /* The low WORD contains the CPU type: 0, 10, 20, 30, 40, or 60 */
         int cpu_type = (int)(cookie_cpu & 0xFFFF);
 
         if (cpu_type >= 60) {
@@ -122,37 +138,10 @@ void Atari_DetectHW(void)
         }
     }
 
-    /* Machine type */
-    if (Getcookie(C__MCH, &cookie_mch) == C_FOUND) {
-        hw_info.mch = cookie_mch;
-        switch (cookie_mch & MCH_MASK) {
-            case MCH_ST:
-                hw_info.hw_type = ATARI_HW_ST;
-                hw_info.video = ATARI_VIDEO_ST;
-                break;
-            case MCH_STE:
-                hw_info.hw_type = ATARI_HW_STE;
-                hw_info.video = ATARI_VIDEO_STE;
-                hw_info.blitter = 1;
-                break;
-            case MCH_TT:
-                hw_info.hw_type = ATARI_HW_TT;
-                hw_info.video = ATARI_VIDEO_TT;
-                hw_info.pmmu = 1;
-                break;
-            case MCH_F30:
-                hw_info.hw_type = ATARI_HW_F30;
-                hw_info.video = ATARI_VIDEO_F30;
-                hw_info.dsp = 1;
-                hw_info.blitter = 1;
-                break;
-            default:
-                hw_info.hw_type = ATARI_HW_UNKNOWN;
-                break;
-        }
-    }
-
-    /* Video hardware */
+    /* ================================================================
+       VIDEO HARDWARE (_VDO) – detect BEFORE _MCH so we have a reliable
+       fallback if the _MCH cookie is missing or unrecognised.
+       ================================================================ */
     if (Getcookie(C__VDO, &cookie_vdo) == C_FOUND) {
         hw_info.vdo = cookie_vdo;
         switch (cookie_vdo >> 16) {
@@ -168,6 +157,73 @@ void Atari_DetectHW(void)
             case VDO_F30:
                 hw_info.video = ATARI_VIDEO_F30;
                 break;
+            case VDO_NOVA:
+                hw_info.video = ATARI_VIDEO_NOVA;
+                break;
+            case VDO_IMAGINE:
+                hw_info.video = ATARI_VIDEO_IMAGINE;
+                break;
+        }
+    }
+
+    /* ================================================================
+       MACHINE TYPE (_MCH) – 16-bit upper word = machine family.
+       Note: Hades shares MCH_TT (0x0002). It is distinguished by the
+       'hade' cookie, detected below.
+       ================================================================ */
+    if (Getcookie(C__MCH, &cookie_mch) == C_FOUND) {
+        hw_info.mch = cookie_mch;
+        switch (cookie_mch & MCH_MASK) {
+            case MCH_ST:
+                hw_info.hw_type = ATARI_HW_ST;
+                hw_info.video = ATARI_VIDEO_ST;
+                break;
+            case MCH_STE:
+                hw_info.hw_type = ATARI_HW_STE;
+                hw_info.video = ATARI_VIDEO_STE;
+                hw_info.blitter = 1;
+                break;
+            case MCH_TT:
+                /* Could be TT, Hades, or Medusa. Don't override video yet. */
+                hw_info.hw_type = ATARI_HW_TT;
+                hw_info.pmmu = 1;
+                break;
+            case MCH_F30:
+                hw_info.hw_type = ATARI_HW_F30;
+                hw_info.video = ATARI_VIDEO_F30;
+                hw_info.dsp = 1;
+                hw_info.blitter = 1;
+                break;
+            case MCH_MILAN:
+                hw_info.hw_type = ATARI_HW_MILAN;
+                hw_info.video = ATARI_VIDEO_MILAN;
+                break;
+            case MCH_ARANYM:
+                /* ARAnyM emulates various machines; keep video as-is */
+                hw_info.hw_type = ATARI_HW_UNKNOWN; /* or add ATARI_HW_ARANYM */
+                break;
+            default:
+                /* Unknown _MCH value – keep hw_type UNKNOWN, fallback
+                   from _VDO below will catch it. */
+                break;
+        }
+    }
+
+    /* ================================================================
+       FALLBACK: if _MCH was missing or unknown, derive hw_type from
+       the _VDO video type we already detected.
+       ================================================================ */
+    if (hw_info.hw_type == ATARI_HW_UNKNOWN) {
+        switch (hw_info.video) {
+            case ATARI_VIDEO_ST:      hw_info.hw_type = ATARI_HW_ST;      break;
+            case ATARI_VIDEO_STE:     hw_info.hw_type = ATARI_HW_STE;     break;
+            case ATARI_VIDEO_TT:      hw_info.hw_type = ATARI_HW_TT;      break;
+            case ATARI_VIDEO_F30:     hw_info.hw_type = ATARI_HW_F30;     break;
+            case ATARI_VIDEO_MILAN:   hw_info.hw_type = ATARI_HW_MILAN;   break;
+            case ATARI_VIDEO_HADES:   hw_info.hw_type = ATARI_HW_HADES;   break;
+            case ATARI_VIDEO_NOVA:    hw_info.hw_type = ATARI_HW_NOVA;    break;
+            case ATARI_VIDEO_IMAGINE: hw_info.hw_type = ATARI_HW_IMAGINE; break;
+            default: break;
         }
     }
 
@@ -176,10 +232,13 @@ void Atari_DetectHW(void)
         hw_info.snd = cookie_snd;
     }
 
-    /* Check for PMMU */
+    /* PMMU: 68030+ always has PMMU; TT always has PMMU */
     hw_info.pmmu = (hw_info.cpu >= ATARI_CPU_68030) || (hw_info.hw_type == ATARI_HW_TT);
 
-    /* Expansion hardware detection */
+    /* ================================================================
+       EXPANSION HARDWARE – these OVERRIDE _MCH/_VDO because they are
+       more specific (add-on video cards, accelerator boards, etc.)
+       ================================================================ */
     if (Getcookie(C__MIL, &cookie_mil) == C_FOUND) {
         hw_info.hw_type = ATARI_HW_MILAN;
         hw_info.video = ATARI_VIDEO_MILAN;
@@ -187,7 +246,7 @@ void Atari_DetectHW(void)
     } else if (Getcookie(C_hade, &cookie_hade) == C_FOUND) {
         hw_info.hw_type = ATARI_HW_HADES;
         hw_info.video = ATARI_VIDEO_HADES;
-        hw_info.mch = MCH_HADES;
+        /* Hades shares MCH_TT (0x0002) with the TT */
     } else if (Getcookie(C_NOVA, &cookie_nova) == C_FOUND) {
         hw_info.hw_type = ATARI_HW_NOVA;
         hw_info.video = ATARI_VIDEO_NOVA;
@@ -199,24 +258,24 @@ void Atari_DetectHW(void)
 
 const char *Atari_GetMachineName(void)
 {
-    switch(hw_info.video) {
-        case ATARI_VIDEO_ST:
-            return "ST";
-        case ATARI_VIDEO_STE:
-            return (hw_info.blitter) ? "STE" : "ST";
-        case ATARI_VIDEO_TT:
-            return "TT";
-        case ATARI_VIDEO_F30:
-            return "Falcon";
-        case ATARI_VIDEO_MILAN:
-            return "Milan";
-        case ATARI_VIDEO_HADES:
-            return "Hades";
-        case ATARI_VIDEO_NOVA:
-            return "Nova Video";
-        case ATARI_VIDEO_IMAGINE:
-            return "Imagine Video";
+    /* Prefer hw_type (machine family) over video (display hardware) */
+    switch (hw_info.hw_type) {
+        case ATARI_HW_ST:      return "ST";
+        case ATARI_HW_STE:     return (hw_info.blitter) ? "STE" : "ST";
+        case ATARI_HW_TT:      return "TT";
+        case ATARI_HW_F30:     return "Falcon";
+        case ATARI_HW_MILAN:   return "Milan";
+        case ATARI_HW_HADES:   return "Hades";
+        case ATARI_HW_NOVA:    return "Nova Video";
+        case ATARI_HW_IMAGINE: return "Imagine Video";
         default:
-            return "Unknown";
+            /* Fallback to video type if hw_type is still unknown */
+            switch (hw_info.video) {
+                case ATARI_VIDEO_ST:  return "ST";
+                case ATARI_VIDEO_STE: return "STE";
+                case ATARI_VIDEO_TT:  return "TT";
+                case ATARI_VIDEO_F30: return "Falcon";
+                default:              return "Unknown";
+            }
     }
 }

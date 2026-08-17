@@ -60,7 +60,7 @@ typedef struct SDL_VideoData {
 
     /* ONE-TIME: VDI format (vq_scrninfo called once in VideoInit) */
     int16_t vdi_pixel_format;      /* 0=interleaved, 1=whole, 2=packed */
-    int16_t vdi_bits_per_pixel;    /* Actual bpp from VDI */
+    int16_t vdi_nb_of_colors;    /* Actual bpp from VDI */
 
     /* ONE-TIME: Palette LUT (built once in VideoInit) */
     Uint16 hw_palette[256];        /* Hardware RGB values (0x0RGB) */
@@ -71,7 +71,7 @@ typedef struct SDL_VideoData {
     /* Saved palette – restored in VideoQuit so the GEM desktop
      * returns to its original colours when the app exits.
      * Indexed by hardware slot (same layout as hw_palette[]). */
-    Uint16 saved_palette[256];
+    short saved_palette[256][3];   /* [VDI_pen][RGB] en échelle 0-1000 */
     int    saved_palette_count;    /* number of valid entries (= 1<<planes) */
 
 } SDL_VideoData;
@@ -233,6 +233,21 @@ extern void Atari_ConvertRGBA8888toRGB332(const Uint8 *src, Uint8 *dst,
                                           int width, int height,
                                           int src_pitch, int dst_pitch);
 
+extern void Atari_ConvertRGB332toRGB24(const Uint8 *src, Uint8 *dst,
+                                       int width, int height,
+                                       int src_pitch, int dst_pitch);
+extern void Atari_ConvertRGB332toBGR24(const Uint8 *src, Uint8 *dst,
+                                       int width, int height,
+                                       int src_pitch, int dst_pitch);
+
+/* RGB565 → RGB332 */
+extern void Atari_ConvertRGB565toRGB332(const Uint8 *src, Uint8 *dst,
+                                        int width, int height,
+                                        int src_pitch, int dst_pitch);
+extern void Atari_ConvertBGR565toRGB332(const Uint8 *src, Uint8 *dst,
+                                        int width, int height,
+                                        int src_pitch, int dst_pitch);
+
 /* Shared LUT tables (initialised on first use) */
 extern Uint16 rgb332_to_rgb565_lut[256];
 extern Uint32 rgb332_to_rgb888_lut[256];
@@ -305,6 +320,13 @@ extern Uint32 rgb332_to_argb8888_lut[256];
    extern void Atari_ConvertRGBA8888toRGB332_asm(const Uint8 *src, Uint8 *dst,
                                                 int width, int height,
                                                 int src_pitch, int dst_pitch);                                 
+   extern void Atari_ConvertRGB565toRGB332_asm(const Uint8 *src, Uint8 *dst,
+                                               int width, int height,
+                                               int src_pitch, int dst_pitch);
+   extern void Atari_ConvertBGR565toRGB332_asm(const Uint8 *src, Uint8 *dst,
+                                               int width, int height,
+                                               int src_pitch, int dst_pitch);
+
 #endif /* SDL_GEM_C2P_ASM */
 
 /* ============================================================
@@ -327,5 +349,9 @@ extern Uint32 rgb332_to_argb8888_lut[256];
 #ifndef MFDB_STRIDE
 #define MFDB_STRIDE(w) (((w) + 15) & ~15)
 #endif
+
+#define VDI_CLUT_HARDWARE  0   /* vq_scrninfo screen_info[1]: hardware CLT */
+#define VDI_CLUT_SOFTWARE  1   /* direct RGB, no CLT */
+#define VDI_CLUT_NONE      2   /* monochrome */
 
 #endif /* SDL_gemvideo_h_ */
