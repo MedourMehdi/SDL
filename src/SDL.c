@@ -233,12 +233,10 @@ int SDL_InitSubSystem(Uint32 flags)
 
     if (gl_apid < 0) {
         gl_apid = mt_appl_init(sdl_global_aes);
-        SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO, "ATARI_GEM_Init: mt_appl_init() returned APID %d", gl_apid);
     }
 
     if (gl_apid < 0) {
         /* Fatal error - cannot continue without AES */
-        SDL_LogDebug(SDL_LOG_CATEGORY_ERROR, "ATARI_GEM_Init: mt_appl_init() failed!");
         Pterm(1);
     }
 #endif

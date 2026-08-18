@@ -232,8 +232,10 @@ static int DetectChangesAndBuildRect(SDL_WindowData *data,
     
     /* Skip checksum for complex updates */
     if (numrects > 4) {
+        #ifdef DEBUG
         SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
                      "GEM: Too many rects (%d), skipping checksum scan", numrects);
+        #endif
         return 2;
     }
 
@@ -302,8 +304,10 @@ have_result:
 
     /* No changes detected */
     if (first_changed == -1) {
+        #ifdef DEBUG
         SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
                      "GEM: No changes detected in %d rows", h);
+        #endif
         return -1;
     }
     
@@ -313,10 +317,12 @@ have_result:
     optimized_rect->w = data->work_w;
     optimized_rect->h = last_changed - first_changed + 1;
     
+    #ifdef DEBUG
     SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
                  "GEM: Changes detected in rows %d-%d (%d rows of %d)",
                  first_changed, last_changed, optimized_rect->h, h);
-    
+    #endif
+
     /* Benefit analysis */
     if (optimized_rect->h < (h * 3 / 4)) {
         // SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
@@ -325,9 +331,12 @@ have_result:
         return 1;
     }
     
+    #ifdef DEBUG
     SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
                  "GEM: Too much changed (%d%%), using full update",
                  (int)((float)optimized_rect->h / h * 100));
+    #endif
+    
     return 0;
 }
 

@@ -154,9 +154,12 @@ static void HandleKeyboard(short key_state_word)
         }
         key_state_map[atari_scan] = 1;
 
+        #ifdef DEBUG
         SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
                      "GEM: key down scan=0x%02X sdl=%d",
                      (int)atari_scan, (int)scancode);
+        #endif
+
         SDL_SendKeyboardKey(SDL_PRESSED, scancode);
 
         ascii_char[0] = (char)(key_state_word & 0xFF);
@@ -186,9 +189,13 @@ static void AgeGameKeys(void)
         active_frames[i]++;
         if (active_frames[i] > KEY_RELEASE_TIMEOUT) {
             SDL_Scancode scancode = ATARI_MapScancode((int)active_scans[i]);
+
+            #ifdef DEBUG
             SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
                          "GEM: key release timeout scan=0x%02X sdl=%d",
                          (int)active_scans[i], (int)scancode);
+            #endif
+
             SDL_SendKeyboardKey(SDL_RELEASED, scancode);
             key_state_map[active_scans[i]] = 0;
             /* O(1) removal: swap with last entry, recheck same slot. */
@@ -270,14 +277,19 @@ static int HandleMessage(_THIS, const short *msg)
     }
 
     if (!window) {
+        #ifdef DEBUG
         SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
                      "GEM: message %d for unknown handle %d",
                      (int)msg[0], (int)msg[3]);
+        #endif
+
         return 0;
     }
 
+    #ifdef DEBUG
     SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
                  "GEM: message %d handle %d", (int)msg[0], (int)msg[3]);
+    #endif
 
     switch (msg[0]) {
 
@@ -402,10 +414,12 @@ static int HandleMessage(_THIS, const short *msg)
             if (sdl_rect.y + sdl_rect.h > window->h)
                 sdl_rect.h = window->h - sdl_rect.y;
 
+            #ifdef DEBUG
             SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
                          "GEM: redraw handle=%d x=%d y=%d w=%d h=%d",
                          (int)msg[3],
                          sdl_rect.x, sdl_rect.y, sdl_rect.w, sdl_rect.h);
+            #endif
 
             if (window->surface && sdl_rect.w > 0 && sdl_rect.h > 0) {
                 SDL_UpdateWindowSurfaceRects(window, &sdl_rect, 1);
@@ -414,9 +428,12 @@ static int HandleMessage(_THIS, const short *msg)
         }
 
         default:
+            #ifdef DEBUG
             SDL_LogDebug(SDL_LOG_CATEGORY_VIDEO,
                          "GEM: unhandled message %d handle=%d",
                          (int)msg[0], (int)msg[3]);
+            #endif
+            
             break;
     }
 

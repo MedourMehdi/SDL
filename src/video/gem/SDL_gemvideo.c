@@ -388,8 +388,8 @@ int GEM_VideoInit(SDL_VideoDevice *this)
     if (gl_apid < 0) return SDL_SetError("AES not initialized");
 
     Atari_DetectHW();
-    fprintf(stderr, "GEM: Hardware: %s (CPU %d)",
-                Atari_GetMachineName(), hw_info.cpu);
+    // fprintf(stderr, "GEM: Hardware: %s (CPU %d)\r\n",
+    //             Atari_GetMachineName(), hw_info.cpu);
 
     mt_wind_get_grect(DESK, WF_WORKXYWH, (GRECT *)&data->work_x, sdl_global_aes);
     mt_wind_get_grect(DESK, WF_CURRXYWH, (GRECT *)&data->desk_x, sdl_global_aes);
@@ -407,14 +407,14 @@ int GEM_VideoInit(SDL_VideoDevice *this)
 
     /* Complete vdi_index[] for slots 16-255 */
     for (i = 16; i < 255; i++) vdi_index[i] = (unsigned char)i;
-    // vdi_index[255] = (hw_info.vdi_type == ATARI_VDI_FVDI) ? 255 : 1;
-    vdi_index[255] = 1;
-    fprintf(stderr, "GEM: VDI type=%s  vdi_index[255]=%d",
-                (hw_info.vdi_type == ATARI_VDI_FVDI) ? "fVDI" :
-                (hw_info.vdi_type == ATARI_VDI_NVDI) ? "NVDI" :
-                (hw_info.vdi_type == ATARI_VDI_GDOS) ? "GDOS" : "ROM",
-                (int)vdi_index[255]);
-    fprintf(stderr, "GEM_VideoInit: planes=%d\r\n", data->planes);
+    vdi_index[255] = (hw_info.vdi_type == ATARI_VDI_FVDI) ? 255 : 1;
+    // vdi_index[255] = 1;
+    // fprintf(stderr, "GEM: VDI type=%s  vdi_index[255]=%d\r\n",
+    //             (hw_info.vdi_type == ATARI_VDI_FVDI) ? "fVDI" :
+    //             (hw_info.vdi_type == ATARI_VDI_NVDI) ? "NVDI" :
+    //             (hw_info.vdi_type == ATARI_VDI_GDOS) ? "GDOS" : "ROM",
+    //             (int)vdi_index[255]);
+    // fprintf(stderr, "GEM_VideoInit: planes=%d\r\n", data->planes);
 
     vq_scrninfo(data->vdi_handle, screen_info);
     data->vdi_pixel_format   = screen_info[0];
@@ -427,29 +427,20 @@ int GEM_VideoInit(SDL_VideoDevice *this)
         for (i = 0; i < 256; i++) {
             vdi_index[*tmp_p++] = (unsigned char)i;
         }
-        fprintf(stderr,
-                    "GEM: vdi_index[] loaded from vq_scrninfo CLUT table");
+        // fprintf(stderr,
+        //             "GEM: vdi_index[] loaded from vq_scrninfo CLUT table");
     }
 
-    fprintf(stderr, "vq_scrninfo: screen_info[1]=%d\r\n", (int)screen_info[1]);
-    fprintf(stderr, "GEM: VDI format=%d bpp=%d planes=%d",
-                data->vdi_pixel_format, data->vdi_nb_of_colors, data->planes);
+    // fprintf(stderr, "vq_scrninfo: screen_info[1]=%d\r\n", (int)screen_info[1]);
+    // fprintf(stderr, "GEM: VDI format=%d bpp=%d planes=%d",
+    //             data->vdi_pixel_format, data->vdi_nb_of_colors, data->planes);
 
-    // if (data->planes <= 8) {
-    //     InitPaletteLUT(data);
-    // }
     if (data->planes <= 8) {
         InitPaletteLUT(data, screen_info);   /* pass screen_info */
     }
     /* Display mode */
     SDL_zero(mode);
-    // switch (data->planes) {
-    //     case 1: case 2: case 4: case 8:
-    //         mode.format = SDL_PIXELFORMAT_RGB332; break;
-    //     case 16: mode.format = SDL_PIXELFORMAT_RGB565; break;
-    //     case 24: mode.format = SDL_PIXELFORMAT_RGB24;  break;
-    //     default: mode.format = SDL_PIXELFORMAT_ARGB8888; break;
-    // }
+
     switch (data->planes) {
         case 1: case 2: case 4: case 8:
             mode.format = SDL_PIXELFORMAT_RGB332; break;
@@ -457,7 +448,7 @@ int GEM_VideoInit(SDL_VideoDevice *this)
         case 24: mode.format = SDL_PIXELFORMAT_BGR24;  break;
         default: mode.format = SDL_PIXELFORMAT_ARGB8888; break;
     }    
-    printf("GEM: Display mode format=%s, SDL_BYTEORDER == %s\r\n", SDL_GetPixelFormatName(mode.format), SDL_BYTEORDER == SDL_LIL_ENDIAN ? "LITTLE_ENDIAN" : "BIG_ENDIAN");
+    // printf("GEM: Display mode format=%s, SDL_BYTEORDER == %s\r\n", SDL_GetPixelFormatName(mode.format), SDL_BYTEORDER == SDL_LIL_ENDIAN ? "LITTLE_ENDIAN" : "BIG_ENDIAN");
     mode.w = data->work_w; mode.h = data->work_h; mode.refresh_rate = 50;
 
     SDL_zero(display);
