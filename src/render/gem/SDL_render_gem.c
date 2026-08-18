@@ -143,7 +143,10 @@ static void GEM_OptimizedTextureCopy(SDL_Surface *texture_surface,
         srcrect->w == dstrect->w &&
         srcrect->h == dstrect->h) {
         /* Must use SDL_BlitSurface if the texture uses alpha blending OR colorkey transparency */
-        if (texture_surface->format->Amask || SDL_HasColorKey(texture_surface)) {
+        // if (texture_surface->format->Amask || SDL_HasColorKey(texture_surface)) {
+        SDL_BlendMode blend_mode;
+        SDL_GetSurfaceBlendMode(texture_surface, &blend_mode);
+        if (blend_mode != SDL_BLENDMODE_NONE || SDL_HasColorKey(texture_surface)) {        
             SDL_BlitSurface(texture_surface, (SDL_Rect*)srcrect,
                             dest_surface, dstrect);
         } else {
